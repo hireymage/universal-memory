@@ -1,0 +1,11 @@
+services:
+  universal-memory:
+    build: .
+    container_name: universal-memory
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # local only; put a TLS reverse proxy in front for remote access
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data

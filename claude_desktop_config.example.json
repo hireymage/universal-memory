@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "universal-memory": {
+      "command": "python3",
+      "args": ["/ABSOLUTE/PATH/TO/universal-memory/server.py"],
+      "env": {
+        "MEMORY_VAULT_PATH": "/ABSOLUTE/PATH/TO/universal-memory/data/vault"
+      }
+    }
+  }
+}
