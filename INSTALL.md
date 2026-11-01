@@ -5,7 +5,7 @@ Předpoklady: Docker Desktop (macOS) spuštěný, `openssl` v terminálu.
 ## 1. Vytvoř token a `.env`
 
 ```bash
-cd /Users/hozzy/MCP/universal-memory
+cd ~/MCP/universal-memory
 cp .env.example .env
 openssl rand -hex 32
 ```

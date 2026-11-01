@@ -4,7 +4,7 @@ Tři místa, tři hodnoty.
 
 | Co | Kde | Hodnota |
 |---|---|---|
-| Token | `.env` v `/Users/hozzy/MCP/universal-memory` | `MEMORY_TOKEN=...` |
+| Token | `.env` v `~/MCP/universal-memory` | `MEMORY_TOKEN=...` |
 | Adresa serveru | konfigurace klienta (níže) | `http://127.0.0.1:8080/mcp` (lokálně) |
 | Token pro klienta | hlavička `Authorization` v konfiguraci klienta | `Bearer <stejný token>` |
 
