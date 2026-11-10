@@ -10,6 +10,13 @@ http:
   port: 27123
   allowed_origins: []
   bearer_token_env: MEMORY_API_TOKEN
+# Experimental BDH sidecar. Leave disabled unless the compose profile `neural` is up.
+# base_url is the compose DNS name, not the host loopback.
+neural:
+  enabled: false
+  base_url: http://neural-memory:8091
+  bearer_token_env: MEMORY_API_TOKEN
+  timeout_ms: 2000
 routing:
   project:
     backend: markdown

@@ -9,6 +9,12 @@ http:
   port: 3333
   allowed_origins: []
   bearer_token_env: MEMORY_API_TOKEN
+# Experimental. Off by default. See docs/neural-memory.md.
+neural:
+  enabled: false
+  base_url: http://127.0.0.1:8091
+  bearer_token_env: MEMORY_API_TOKEN
+  timeout_ms: 1500
 routing:
   project:
     backend: markdown

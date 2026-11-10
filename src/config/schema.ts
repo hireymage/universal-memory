@@ -17,6 +17,17 @@ const configSchema = z.object({
     bearer_token_env: z.string().default('MEMORY_API_TOKEN'),
   }).default({ bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'MEMORY_API_TOKEN' }),
   routing: z.record(z.string(), routeSchema),
+  /**
+   * Experimental BDH associative memory. Off unless `enabled` is true.
+   * The sidecar is a disposable index outside the vault; Markdown stays the
+   * source of truth whether or not this block is present.
+   */
+  neural: z.object({
+    enabled: z.boolean().default(false),
+    base_url: z.string().min(1).default('http://127.0.0.1:8091'),
+    bearer_token_env: z.string().min(1).default('MEMORY_API_TOKEN'),
+    timeout_ms: z.number().int().min(50).max(120_000).default(1500),
+  }).optional(),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

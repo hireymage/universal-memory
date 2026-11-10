@@ -21,6 +21,15 @@ Vault na hostiteli musí být zapisovatelný pro UID 10001 (Linux: `sudo chown -
 
 Testy: `docker build --target test .`
 
+## Experimentální neuronová paměť (volitelně)
+
+Sidecar s Hebbovskou asociativní pamětí se nespouští sám. Je ve profilu `neural`, nepublikuje port na hostitele a čte stejný bearer token jako hlavní server. Stav si píše do `/state/neural` (mimo vault). Zapnutí:
+
+1. V `config.docker.yml` nastav `neural.enabled: true` (adresa `http://neural-memory:8091` už tam je).
+2. `docker compose --profile neural up -d --build`
+
+Když profil neběží a vrstva je přesto zapnutá, zápis do Markdownu projde a `associate` vrátí prázdný poradní výsledek. Podrobněji [docs/neural-memory.md](./docs/neural-memory.md).
+
 ## Windows: build přes SSH
 Docker Desktop ve SSH relaci nemá přístup ke správci pověření Windows (`A specified logon session does not exist`).
 Build proto běží s anonymní konfigurací a klasickým builderem (base image `node:24-bookworm-slim` už je stažený):

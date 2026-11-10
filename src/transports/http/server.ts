@@ -26,6 +26,15 @@ export function createHttpApp(s:Services){
   if(limit!==undefined&&(!Number.isInteger(limit)||limit<=0))throw new MemoryError('VALIDATION_ERROR','limit must be a positive integer');
   res.json(await s.memory.search({query:String(req.query.q??''),types:typeof req.query.type==='string'?[req.query.type]:undefined,limit}));
  }));
+ app.get('/api/v1/associate',auth,asyncRoute(async(req,res)=>{
+  const limit=req.query.limit===undefined?10:Number(req.query.limit);
+  if(!Number.isInteger(limit)||limit<=0)throw new MemoryError('VALIDATION_ERROR','limit must be a positive integer');
+  const mode=req.query.mode===undefined?'neural':String(req.query.mode);
+  if(mode!=='neural'&&mode!=='hybrid')throw new MemoryError('VALIDATION_ERROR','mode must be neural or hybrid');
+  const query=String(req.query.q??'');
+  if(!query)throw new MemoryError('VALIDATION_ERROR','q is required');
+  res.json(await s.neuralMemory.associate(query,Math.min(limit,50),mode));
+ }));
  app.get('/api/v1/people/birthdays',auth,asyncRoute(async(req,res)=>res.json(await s.people.birthdays(String(req.query.from),String(req.query.to)))));
  app.post('/api/v1/reindex',auth,asyncRoute(async(_req,res)=>res.json(await s.maintenance.reindex())));
  app.get('/api/v1/external-files',auth,asyncRoute(async(req,res)=>{

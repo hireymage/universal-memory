@@ -37,6 +37,43 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Experimental associative memory. Not started unless you ask for it:
+  #   docker compose --profile neural up -d --build
+  # Then set neural.enabled: true in the mounted config. The process binds
+  # 0.0.0.0 only inside its own network namespace; Compose publishes no host
+  # port, so it is not reachable from the LAN. The Node server calls it by
+  # service name. Uncomment the ports block to expose it on host loopback.
+  neural-memory:
+    profiles: ["neural"]
+    build:
+      context: ./neural
+      dockerfile: Dockerfile
+    image: umm-bdh-memory:${UMM_IMAGE_TAG:-local}
+    container_name: umm-bdh-memory
+    restart: unless-stopped
+    environment:
+      BDH_BIND: 0.0.0.0
+      BDH_PORT: "8091"
+      BDH_STATE_DIR: /state/neural
+      BDH_TOKEN_FILE: /run/secrets/memory_api_token
+    secrets:
+      - memory_api_token
+    volumes:
+      - umm-state:/state
+    # ports:
+    #   - "127.0.0.1:8091:8091"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 secrets:
   memory_api_token:
     file: ${UMM_TOKEN_FILE:-./secrets/memory_api_token}

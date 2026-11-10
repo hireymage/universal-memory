@@ -102,9 +102,21 @@ docker build -t universal-memory-mcp .
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for boundaries, schema, risks, and evolution rules, and [TOOL_CONTRACTS.md](./TOOL_CONTRACTS.md) for the public MCP surface.
 For persistent multi-agent identity, Soul, roles, language policy, and runtime loading, see [AGENT_PROFILES_ARCHITECTURE.md](./AGENT_PROFILES_ARCHITECTURE.md).
 
+## Neural associative memory (experimental)
+
+Optional add-on, disabled unless `neural.enabled` is true. A small CPU PyTorch sidecar (`neural/`) keeps a Dragon Hatchling-style Hebbian synaptic state under the state directory and answers `associate` (MCP and `GET /api/v1/associate`). The classic model still does the talking. Markdown, revisions, audit, and the read-only default are unchanged. If the sidecar is not running, writes succeed and `associate` returns an empty advisory result. Docker Compose starts it only with `--profile neural`. Czech write-up: [docs/neural-memory.md](./docs/neural-memory.md).
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r neural/requirements.txt
+python neural/demo_associate.py
+python -m pytest neural/tests
+```
+
 ## Known MVP boundaries
 
 - Full-text search is deterministic local substring/metadata search; the index port is ready for FTS/vector/hybrid adapters, but embeddings are not required or implemented.
+- An experimental BDH associative-memory sidecar can be turned on beside the substring index. It is off by default, stores nothing in the vault, and the server keeps working if it is down. Learned hits are advisory. See [docs/neural-memory.md](./docs/neural-memory.md).
 - Multi-file changesets validate all preconditions before writing, but POSIX filesystems cannot provide a single atomic rename across multiple files. Audit snapshots and recovery changesets limit impact; a future journal adapter can strengthen crash recovery.
 - Exact semantic duplicate detection and content rewriting remain the caller LLM's job. The server only validates structured proposals.
 - Multi-backend distributed transactions are a future port-level concern; the current guarantee is within the Markdown adapter.

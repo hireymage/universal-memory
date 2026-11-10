@@ -1,0 +1,6 @@
+# CPU PyTorch first, then this file. The default PyPI torch wheel is not required
+# and is much larger.
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r neural/requirements.txt
+pytest>=8

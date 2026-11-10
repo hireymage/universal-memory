@@ -1,4 +1,7 @@
 node_modules/
+__pycache__/
+.pytest_cache/
+*.pyc
 dist/
 coverage/
 .env
