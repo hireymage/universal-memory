@@ -23,15 +23,23 @@ RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
-    MEMORY_CONFIG=/config/config.yml
+    MEMORY_CONFIG=/config/config.yml \
+    TORCH_HOME=/tmp/torch \
+    XDG_CACHE_HOME=/tmp
 WORKDIR /app
+# Experimental BDH sidecar (CPU PyTorch) lives in a venv next to the Node runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
+ && python3 -m venv /opt/neural \
+ && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+ && apt-get purge -y python3-venv && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 memory \
  && useradd --system --uid 10001 --gid memory --home-dir /app --shell /usr/sbin/nologin memory \
- && mkdir -p /vault /state /config \
- && chown memory:memory /vault /state
+ && mkdir -p /vault /state /state/neural /config /tmp/torch \
+ && chown memory:memory /vault /state /state/neural /tmp/torch
 COPY --from=prod-deps --chown=memory:memory /app/node_modules ./node_modules
 COPY --from=build --chown=memory:memory /app/dist ./dist
 COPY --chown=memory:memory package.json ./
+COPY --chown=memory:memory neural/bdh_memory /app/neural/bdh_memory
 COPY --chown=memory:memory config.docker.yml /config/config.yml
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod 755 /usr/local/bin/docker-entrypoint.sh

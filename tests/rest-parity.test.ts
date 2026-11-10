@@ -284,9 +284,10 @@ describe('numeric limit params on REST search and external-files routes',()=>{
    const result=await client.callTool({name,arguments:args});
    expect(result.isError).toBe(true);
   }
-  const defaults=await client.callTool({name:'search_memory',arguments:{query:'anything'}}) as {isError?:boolean;structuredContent?:{data:unknown[]}};
+  const defaults=await client.callTool({name:'search_memory',arguments:{query:'anything'}}) as {isError?:boolean;structuredContent?:{data:{lexical:unknown[];neural:unknown}}};
   expect(defaults.isError).toBeUndefined();
-  expect(Array.isArray(defaults.structuredContent?.data)).toBe(true);
+  expect(Array.isArray(defaults.structuredContent?.data.lexical)).toBe(true);
+  expect(defaults.structuredContent?.data.neural).toBeDefined();
   const atMax=await client.callTool({name:'search_memory',arguments:{query:'anything',limit:200}}) as {isError?:boolean};
   expect(atMax.isError).toBeUndefined();
   const scanDefault=await client.callTool({name:'scan_external_files',arguments:{}}) as {isError?:boolean};

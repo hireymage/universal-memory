@@ -10,11 +10,10 @@ http:
   port: 27123
   allowed_origins: []
   bearer_token_env: MEMORY_API_TOKEN
-# Experimental BDH sidecar. Leave disabled unless the compose profile `neural` is up.
-# base_url is the compose DNS name, not the host loopback.
+# Experimental BDH sidecar. It runs inside this container (docker-entrypoint.sh, UMM_NEURAL=0 turns it off).
 neural:
-  enabled: false
-  base_url: http://neural-memory:8091
+  enabled: true
+  base_url: http://127.0.0.1:8091
   bearer_token_env: MEMORY_API_TOKEN
   timeout_ms: 2000
 routing:
