@@ -30,7 +30,7 @@ WORKDIR /app
 # Experimental BDH sidecar (CPU PyTorch) lives in a venv next to the Node runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
  && python3 -m venv /opt/neural \
- && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+ && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch \
  && apt-get purge -y python3-venv && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 memory \
  && useradd --system --uid 10001 --gid memory --home-dir /app --shell /usr/sbin/nologin memory \
