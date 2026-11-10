@@ -1,3 +1,14 @@
+node_modules
+dist
+.git
 .env
-data/
-*.db
+.state
+coverage
+work
+outputs
+reports
+tests/tmp
+secrets
+vault
+._*
+.DS_Store

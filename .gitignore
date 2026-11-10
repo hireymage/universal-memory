@@ -1,4 +1,19 @@
+node_modules/
+dist/
+coverage/
 .env
-data/
-*.db
-__pycache__/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.universal-memory/
+tests/tmp/
+# local data and secrets - never commit
+/vault/
+/secrets/
+/.state/
+/config.yml
+*.key
+.env.*
+!.env.example
+._*
+.DS_Store

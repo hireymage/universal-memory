@@ -1,0 +1,33 @@
+name: Universal Memory MCP
+vault_root: ./vault
+read_only: true
+index_path: ./.state/index.sqlite
+audit_dir: ./.state/audit
+transport: stdio
+http:
+  bind: 127.0.0.1
+  port: 3333
+  allowed_origins: []
+  bearer_token_env: MEMORY_API_TOKEN
+routing:
+  project:
+    backend: markdown
+    path: "02 Projects/{slug}/index.md"
+  person:
+    backend: markdown
+    path: "People/{slug}.md"
+  note:
+    backend: markdown
+    path: "03 Knowledge/{slug}.md"
+  knowledge:
+    backend: markdown
+    path: "03 Knowledge/{slug}.md"
+  inbox:
+    backend: markdown
+    path: "01 Inbox/{date}-{slug}.md"
+  memory:
+    backend: markdown
+    path: "03 Knowledge/{slug}.md"
+  source:
+    backend: markdown
+    path: "Sources/{provider}/{date}-{slug}.md"

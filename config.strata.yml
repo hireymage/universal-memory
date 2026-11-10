@@ -1,0 +1,127 @@
+# Universal Memory MCP – variant listening on internal port 8080 (e.g. drop-in replacement for an older server on that port).
+# Paths are container paths: mount the vault at /vault and persistent state at /state.
+name: Universal Memory MCP
+vault_root: /vault
+read_only: false
+audit_dir: /state/audit
+transport: http
+http:
+  bind: 0.0.0.0
+  port: 8080
+  allowed_origins: []
+  bearer_token_env: MEMORY_API_TOKEN
+routing:
+  project:
+    backend: markdown
+    path: "02 Projects/{project_slug}/index.md"
+  project_note:
+    backend: markdown
+    path: "02 Projects/{project_slug}/{project_subpath}{slug}.md"
+  project_decision:
+    backend: markdown
+    path: "02 Projects/{project_slug}/decisions/{date}-{slug}.md"
+  project_collection:
+    backend: markdown
+    path: "02 Projects/{slug}.md"
+  person:
+    backend: markdown
+    path: "People/{slug}.md"
+  company:
+    backend: markdown
+    path: "Companies/{slug}.md"
+  property:
+    backend: markdown
+    path: "Assets/{slug}.md"
+  experience:
+    backend: markdown
+    path: "01 Me/{slug}.md"
+  decision:
+    backend: markdown
+    path: "10 Decisions/{slug}.md"
+  collection:
+    backend: markdown
+    path: "01 Me/{slug}.md"
+  area:
+    backend: markdown
+    path: "03 Areas/{slug}.md"
+  system:
+    backend: markdown
+    path: "05 Systems/{slug}.md"
+  device:
+    backend: markdown
+    path: "05 Systems/Devices/{slug}.md"
+  access:
+    backend: markdown
+    path: "06 Access/{slug}.md"
+  reference:
+    backend: markdown
+    path: "13 Resources/References/{slug}.md"
+  source:
+    backend: markdown
+    path: "13 Resources/Sources/{provider}/{date}-{slug}.md"
+  communication:
+    backend: markdown
+    path: "07 Communication/{slug}.md"
+  idea:
+    backend: markdown
+    path: "08 Ideas/{slug}.md"
+  research:
+    backend: markdown
+    path: "09 Research/{slug}.md"
+  web-clipping:
+    backend: markdown
+    path: "09 Research/Web Clippings/{slug}.md"
+  purchase-decision:
+    backend: markdown
+    path: "10 Decisions/Purchases/{slug}.md"
+  configuration:
+    backend: markdown
+    path: "05 Systems/Configuration/{slug}.md"
+  task:
+    backend: markdown
+    path: "11 Tasks/{slug}.md"
+  journal:
+    backend: markdown
+    path: "12 Journal/{slug}.md"
+  resource:
+    backend: markdown
+    path: "13 Resources/{slug}.md"
+  archive:
+    backend: markdown
+    path: "90 Archive/{slug}.md"
+  system_artifact:
+    backend: markdown
+    path: "99 System/{system_subpath}{slug}.md"
+  folder_collection:
+    backend: markdown
+    path: "{collection_path}/index.md"
+  note:
+    backend: markdown
+    path: "04 Knowledge/{slug}.md"
+  knowledge:
+    backend: markdown
+    path: "04 Knowledge/{slug}.md"
+  inbox:
+    backend: markdown
+    path: "00 Inbox/AI Inbox/{date}-{slug}.md"
+  agent_identity:
+    backend: markdown
+    path: "Agents/{agent_id}/identity.en.md"
+  agent_identity_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/identity.cs.md"
+  agent_soul:
+    backend: markdown
+    path: "Agents/{agent_id}/soul.en.md"
+  agent_soul_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/soul.cs.md"
+  agent_role:
+    backend: markdown
+    path: "Agents/{agent_id}/roles/{role_id}.en.md"
+  agent_role_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/roles/{role_id}.cs.md"
+  memory:
+    backend: markdown
+    path: "Memory/{slug}.md"

@@ -1,20 +1,46 @@
-FROM python:3.12-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MCP_TRANSPORT=http \
-    MCP_PORT=8080 \
-    MEMORY_VAULT_PATH=/data/vault \
-    MEMORY_INDEX_PATH=/data/index.db
-
+# Universal Memory MCP – container image
+# Build:  docker build -t universal-memory-mcp:local .
+# Tests:  docker build --target test .
+FROM node:24-bookworm-slim AS deps
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
-COPY server.py .
-RUN useradd --create-home app && mkdir -p /data && chown app /data
-USER app
+FROM deps AS build
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build
 
-VOLUME ["/data"]
-EXPOSE 8080
-CMD ["python", "server.py"]
+FROM build AS test
+COPY vitest.config.ts ./
+COPY tests ./tests
+RUN npm test
+
+FROM node:24-bookworm-slim AS prod-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+FROM node:24-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    MEMORY_CONFIG=/config/config.yml
+WORKDIR /app
+RUN groupadd --system --gid 10001 memory \
+ && useradd --system --uid 10001 --gid memory --home-dir /app --shell /usr/sbin/nologin memory \
+ && mkdir -p /vault /state /config \
+ && chown memory:memory /vault /state
+COPY --from=prod-deps --chown=memory:memory /app/node_modules ./node_modules
+COPY --from=build --chown=memory:memory /app/dist ./dist
+COPY --chown=memory:memory package.json ./
+COPY --chown=memory:memory config.docker.yml /config/config.yml
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod 755 /usr/local/bin/docker-entrypoint.sh
+USER memory
+EXPOSE 27123
+VOLUME ["/vault", "/state"]
+# Health port must match http.port in the mounted config (config.strata.yml uses 8080 -> UMM_HEALTH_PORT=8080).
+ENV UMM_HEALTH_PORT=27123
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+process.env.UMM_HEALTH_PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["serve"]
