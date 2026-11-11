@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseChatGptExport } from '../src/domain/chatgpt-export.js';
 import { parseClaudeExport } from '../src/domain/claude-export.js';
+import { parseClaudeCodeSession } from '../src/domain/claude-code-session.js';
 
 let dir: string | undefined;
 
@@ -65,5 +66,29 @@ describe('Claude export parser', () => {
     expect(await parseClaudeExport(file)).toEqual([]);
     const bad = await writeJson('bad.json', { not: 'an array' });
     await expect(parseClaudeExport(bad)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+});
+
+describe('Claude Code session parser', () => {
+  it('keeps only user and assistant text, skipping tools, thinking, sidechains, injected reminders and request blobs', async () => {
+    const lines = [
+      { type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-1' },
+      { type: 'custom-title', customTitle: 'Test session', sessionId: 'sess-1' },
+      { type: 'api-request-blob', sessionId: 'sess-1', message: { role: 'system', content: [{ type: 'text', text: 'system prompt with account data' }] } },
+      { type: 'user', sessionId: 'sess-1', timestamp: '2026-01-02T10:00:00Z', message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>context</system-reminder>' }] } },
+      { type: 'user', sessionId: 'sess-1', timestamp: '2026-01-02T10:00:01Z', message: { role: 'user', content: 'Kde je config?' } },
+      { type: 'assistant', sessionId: 'sess-1', timestamp: '2026-01-02T10:00:02Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: 'V config.docker.yml.' }] } },
+      { type: 'assistant', sessionId: 'sess-1', timestamp: '2026-01-02T10:00:03Z', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash' }] } },
+      { type: 'user', sessionId: 'sess-1', timestamp: '2026-01-02T10:00:04Z', message: { role: 'user', content: [{ type: 'tool_result', content: 'output' }] } },
+      { type: 'assistant', sessionId: 'sess-1', isSidechain: true, timestamp: '2026-01-02T10:00:05Z', message: { role: 'assistant', content: [{ type: 'text', text: 'sub-agent chatter' }] } },
+      'this line is not json',
+    ].map(line => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n');
+    dir = await mkdtemp(path.join(os.tmpdir(), 'umm-cc-'));
+    const file = path.join(dir, 'sess-1.jsonl');
+    await writeFile(file, lines + '\n');
+    const conversation = await parseClaudeCodeSession(file);
+    expect(conversation.id).toBe('sess-1');
+    expect(conversation.title).toBe('Test session');
+    expect(conversation.messages.map(m => [m.role, m.text])).toEqual([['user', 'Kde je config?'], ['assistant', 'V config.docker.yml.']]);
   });
 });

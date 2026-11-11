@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseChatGptExport, type ParsedConversation } from '../domain/chatgpt-export.js';
 import { parseClaudeExport } from '../domain/claude-export.js';
+import { parseClaudeCodeSession } from '../domain/claude-code-session.js';
 import { MemoryService } from './memory-service.js';
 
 /**
@@ -20,7 +21,7 @@ export interface ChatGptImportResult {
 }
 
 export interface ConversationImportOptions {
-  provider: 'chatgpt' | 'claude';
+  provider: 'chatgpt' | 'claude' | 'claude-code';
   origin: string;
 }
 
@@ -76,4 +77,9 @@ export async function importChatGptExport(memory: MemoryService, inputPath: stri
 export async function importClaudeExport(memory: MemoryService, inputPath: string, client?: string): Promise<ChatGptImportResult[]> {
   const conversations = await parseClaudeExport(inputPath);
   return importConversations(memory, inputPath, conversations, { provider: 'claude', origin: 'claude-export' }, client);
+}
+
+export async function importClaudeCodeSession(memory: MemoryService, inputPath: string, client?: string): Promise<ChatGptImportResult[]> {
+  const conversation = await parseClaudeCodeSession(inputPath);
+  return importConversations(memory, inputPath, [conversation], { provider: 'claude-code', origin: 'claude-code-session' }, client);
 }

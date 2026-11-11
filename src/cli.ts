@@ -45,6 +45,19 @@ program.command('import-claude')
   const { importClaudeExport }=await import('./application/chatgpt-import.js');
   console.log(JSON.stringify(await importClaudeExport(services.memory,filePath),null,2));
  });
+program.command('import-claude-code')
+ .description('Import one Claude Code session transcript (.jsonl) as a dedup-aware source entity; keeps only user/assistant text')
+ .argument('<path>','session file: ~/.claude/projects/<dir>/<session>.jsonl')
+ .option('--dry-run','parse and print a JSON summary without writing anything')
+ .action(async(filePath:string,opts:{dryRun?:boolean})=>{
+  const config=await loadConfig(program.opts<{config:string}>().config);
+  const { parseClaudeCodeSession }=await import('./domain/claude-code-session.js');
+  const conversation=await parseClaudeCodeSession(filePath);
+  if(opts.dryRun){console.log(exportSummary(filePath,[conversation]));return;}
+  const services=await compose(config);
+  const { importClaudeCodeSession }=await import('./application/chatgpt-import.js');
+  console.log(JSON.stringify(await importClaudeCodeSession(services.memory,filePath),null,2));
+ });
 program.command('phase3')
  .description('Phase-3 deterministic migration runner (relations/claims/sources)')
  .option('-s, --stage <stage>','migration stage to run','relations')
