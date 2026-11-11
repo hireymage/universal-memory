@@ -105,9 +105,13 @@ class VectorIndex:
             return []
         if self._matrix is None:
             self._ids = list(self.vectors.keys())
-            self._matrix = torch.stack([self.vectors[i] for i in self._ids])
+            raw = torch.stack([self.vectors[i] for i in self._ids])
+            # Sentence embeddings sit in a narrow cone, so every note looks alike
+            # and generic short notes win. Centre on the corpus mean, then renormalise.
+            self._mean = raw.mean(dim=0)
+            self._matrix = torch.nn.functional.normalize(raw - self._mean, dim=1)
         q = self.encoder.encode([query_text(query)])[0]
-        scores = self._matrix @ q
+        scores = self._matrix @ torch.nn.functional.normalize(q - self._mean, dim=0)
         k = min(limit, scores.shape[0])
         top = torch.topk(scores, k)
         return [(self._ids[int(i)], round(float(s), 6)) for s, i in zip(top.values, top.indices)]
