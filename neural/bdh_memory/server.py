@@ -273,6 +273,7 @@ def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
     encoder = SentenceEncoder(
         os.environ.get("BDH_EMBED_MODEL", DEFAULT_MODEL),
         cache_dir=os.environ.get("SENTENCE_TRANSFORMERS_HOME") or None,
+        pooling=os.environ.get("BDH_POOLING") or None,
     )
     index = VectorIndex(encoder, state_dir)
     index.load()

@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
  && apt-get purge -y python3-venv && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 # Vector layer: sentence-transformers plus the multilingual e5-small weights, baked in at build time
 # so the running container needs no network (HF_HUB_OFFLINE=1).
-ARG EMBED_MODEL=intfloat/multilingual-e5-small
+ARG EMBED_MODEL=intfloat/multilingual-e5-base
 RUN /opt/neural/bin/pip install --no-cache-dir --extra-index-url https://pypi.org/simple sentence-transformers \
  && mkdir -p /opt/models \
  && SENTENCE_TRANSFORMERS_HOME=/opt/models /opt/neural/bin/python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('EMBED_MODEL','${EMBED_MODEL}'), cache_folder='/opt/models')" \

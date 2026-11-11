@@ -17,7 +17,7 @@ from typing import Any, Iterable, Protocol
 
 import torch
 
-DEFAULT_MODEL = "intfloat/multilingual-e5-small"
+DEFAULT_MODEL = "intfloat/multilingual-e5-base"
 MAX_PASSAGE_CHARS = 2000
 EMBED_BATCH = 32
 
@@ -32,10 +32,17 @@ class Encoder(Protocol):
 class SentenceEncoder:
     """Wraps sentence-transformers. Imported lazily so tests run without it."""
 
-    def __init__(self, model_name: str, cache_dir: str | None = None) -> None:
-        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+    def __init__(self, model_name: str, cache_dir: str | None = None, pooling: str | None = None) -> None:
+        from sentence_transformers import SentenceTransformer, models  # noqa: PLC0415
 
-        self.model = SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
+        if pooling == "cls":
+            # Some checkpoints (e.g. Seznam SimCSE) have no sentence-transformers config and
+            # are trained on the [CLS] token. The default mean pooling would silently mis-embed.
+            word = models.Transformer(model_name, cache_dir=cache_dir)
+            pool = models.Pooling(word.get_word_embedding_dimension(), pooling_mode="cls")
+            self.model = SentenceTransformer(modules=[word, pool], device="cpu")
+        else:
+            self.model = SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
         self.dim = int(self.model.get_sentence_embedding_dimension())
 
     def encode(self, texts: list[str]) -> torch.Tensor:
