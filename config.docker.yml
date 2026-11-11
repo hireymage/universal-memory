@@ -15,7 +15,7 @@ neural:
   enabled: true
   base_url: http://127.0.0.1:8091
   bearer_token_env: MEMORY_API_TOKEN
-  timeout_ms: 300000
+  timeout_ms: 120000
 routing:
   project:
     backend: markdown
