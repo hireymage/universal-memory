@@ -20,10 +20,11 @@ import type { AppConfig } from './config/schema.js';
 export async function compose(config: AppConfig) {
   const inner = new InMemoryIndex();
   const neural: NeuralAssociativeMemory = config.neural?.enabled
-    ? new BdhSidecarClient({
+      ? new BdhSidecarClient({
         baseUrl: config.neural.base_url,
         token: process.env[config.neural.bearer_token_env],
         timeoutMs: config.neural.timeout_ms,
+        vectorMinScore: config.neural.vector_min_score,
       })
     : new DisabledNeuralMemory();
   // The neural layer is a second disposable index. It is not installed at all
@@ -41,7 +42,7 @@ export async function compose(config: AppConfig) {
   const graph = new GraphService(storage, index, audit, memory);
   const sources = new SourceService(memory, index);
   const migrationLedger = new MigrationLedger(`${config.audit_dir}/migration-ledger.jsonl`);
-  const neuralMemory = new NeuralMemoryService(neural, inner, id => storage.get(id));
+  const neuralMemory = new NeuralMemoryService(neural, inner, id => storage.get(id), config.neural?.vector_min_score ?? 0);
   return { config, index, storage, audit, memory, people, projects, maintenance, agents, graph, sources, migrationLedger, neural, neuralMemory };
 }
 export type Services = Awaited<ReturnType<typeof compose>>;

@@ -4,6 +4,8 @@ export interface BdhClientOptions {
   baseUrl: string;
   token?: string;
   timeoutMs: number;
+  /** Forwarded as `min_score` so the sidecar does not fill `limit` with weak cosine hits. */
+  vectorMinScore?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -32,7 +34,9 @@ export class BdhSidecarClient implements NeuralAssociativeMemory {
   }
 
   async associate(query: string, limit: number): Promise<NeuralAssociateResponse> {
-    const response = await this.post('/v1/associate', { query, limit }, this.options.timeoutMs);
+    const body: { query: string; limit: number; min_score?: number } = { query, limit };
+    if (typeof this.options.vectorMinScore === 'number') body.min_score = this.options.vectorMinScore;
+    const response = await this.post('/v1/associate', body, this.options.timeoutMs);
     if (!response.ok) return { available: false, results: [], warning: response.warning };
     const results = Array.isArray(response.body.results) ? response.body.results.flatMap(readHit) : [];
     const vectorResults = Array.isArray(response.body.vector_results) ? response.body.vector_results.flatMap(readHit) : [];

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -167,7 +168,7 @@ def associate(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
         vector_hits: list[dict[str, Any]] = []
         vector_available = False
         if app.vectors is not None and body.get("vector", True):
-            vector_hits = [{"id": i, "score": s} for i, s in app.vectors.search(query, limit)]
+            vector_hits = [{"id": i, "score": s} for i, s in app.vectors.search(query, limit, read_min_score(body, app.vectors.min_score))]
             vector_available = True
     return {
         "ok": True,
@@ -266,6 +267,26 @@ def build_model_from_env() -> tuple[AssociativeBDH, StateStore]:
     return model, store
 
 
+def read_min_score(body: dict[str, Any], default: float) -> float:
+    if "min_score" not in body:
+        return default
+    value = body["min_score"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        raise ValueError("min_score must be a finite number")
+    return float(value)
+
+
+def min_score_from_env() -> float:
+    raw = os.environ.get("BDH_VECTOR_MIN_SCORE", "0")
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise SystemExit(f"BDH_VECTOR_MIN_SCORE must be a finite number (got {raw!r})") from error
+    if not math.isfinite(value):
+        raise SystemExit(f"BDH_VECTOR_MIN_SCORE must be a finite number (got {raw!r})")
+    return value
+
+
 def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
     """Dense vector layer. Off unless BDH_VECTOR=1; the model must be present in the image or cache."""
     if os.environ.get("BDH_VECTOR", "0") != "1":
@@ -275,7 +296,7 @@ def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
         cache_dir=os.environ.get("SENTENCE_TRANSFORMERS_HOME") or None,
         pooling=os.environ.get("BDH_POOLING") or None,
     )
-    index = VectorIndex(encoder, state_dir)
+    index = VectorIndex(encoder, state_dir, min_score=min_score_from_env())
     index.load()
     return index
 

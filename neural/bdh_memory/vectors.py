@@ -11,6 +11,7 @@ the vector layer, and the next reindex rebuilds it from Markdown.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any, Iterable, Protocol
@@ -62,13 +63,17 @@ def query_text(query: str) -> str:
 
 
 class VectorIndex:
-    def __init__(self, encoder: Encoder, directory: Path) -> None:
+    def __init__(self, encoder: Encoder, directory: Path, min_score: float = 0.0) -> None:
         self.encoder = encoder
         self.directory = directory
         self.file = directory / "vectors.pt"
+        # Hits must be strictly above this cosine. The default drops negatives
+        # (and exact zeros) instead of using them to fill `limit`.
+        self.min_score = min_score
         self.revisions: dict[str, str] = {}
         self.vectors: dict[str, torch.Tensor] = {}
         self._matrix: torch.Tensor | None = None
+        self._mean: torch.Tensor | None = None
         self._ids: list[str] = []
 
     def __len__(self) -> int:
@@ -107,21 +112,35 @@ class VectorIndex:
         self._matrix = None
         return len(batch)
 
-    def search(self, query: str, limit: int) -> list[tuple[str, float]]:
-        if not self.vectors:
+    def search(self, query: str, limit: int, min_score: float | None = None) -> list[tuple[str, float]]:
+        if not self.vectors or limit <= 0:
             return []
+        floor = self.min_score if min_score is None else min_score
         if self._matrix is None:
             self._ids = list(self.vectors.keys())
             raw = torch.stack([self.vectors[i] for i in self._ids])
-            # Sentence embeddings sit in a narrow cone, so every note looks alike
-            # and generic short notes win. Centre on the corpus mean, then renormalise.
-            self._mean = raw.mean(dim=0)
-            self._matrix = torch.nn.functional.normalize(raw - self._mean, dim=1)
+            if raw.shape[0] == 1:
+                # Centring a single vector on itself yields zeros, so the only
+                # note would never clear a positive floor. Compare it raw.
+                self._mean = torch.zeros_like(raw[0])
+                self._matrix = torch.nn.functional.normalize(raw, dim=1)
+            else:
+                # Sentence embeddings sit in a narrow cone, so every note looks alike
+                # and generic short notes win. Centre on the corpus mean, then renormalise.
+                self._mean = raw.mean(dim=0)
+                self._matrix = torch.nn.functional.normalize(raw - self._mean, dim=1)
         q = self.encoder.encode([query_text(query)])[0]
+        assert self._mean is not None and self._matrix is not None
         scores = self._matrix @ torch.nn.functional.normalize(q - self._mean, dim=0)
-        k = min(limit, scores.shape[0])
-        top = torch.topk(scores, k)
-        return [(self._ids[int(i)], round(float(s), 6)) for s, i in zip(top.values, top.indices)]
+        ranked = sorted(
+            (
+                (float(scores[index]), index)
+                for index in range(int(scores.shape[0]))
+                if math.isfinite(float(scores[index])) and float(scores[index]) > floor
+            ),
+            key=lambda item: (-item[0], self._ids[item[1]]),
+        )
+        return [(self._ids[index], round(score, 6)) for score, index in ranked[:limit]]
 
     def save(self) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)

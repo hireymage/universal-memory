@@ -26,13 +26,27 @@ function neuralWith(response: Partial<Awaited<ReturnType<NeuralAssociativeMemory
 }
 
 describe('vector recall as a third result list', () => {
-  const notes = new Map([['v1', entity('v1', 'Database decision')]]);
+  const notes = new Map([
+    ['v1', entity('v1', 'Database decision')],
+    ['n1', entity('n1', 'Neural note')],
+    ['stale', entity('stale', 'Gone from the index')],
+    ['weak', entity('weak', 'Weak cosine')],
+  ]);
   const lookup = async (id: string) => notes.get(id);
+
+  async function indexed(...ids: string[]): Promise<InMemoryIndex> {
+    const index = new InMemoryIndex();
+    for (const id of ids) {
+      const note = notes.get(id);
+      if (note) await index.upsert(note);
+    }
+    return index;
+  }
 
   it('returns vector hits with source "vector" and keeps the neural list separate', async () => {
     const service = new NeuralMemoryService(
       neuralWith({ results: [{ id: 'n1', score: 0.4 }], vectorAvailable: true, vectorResults: [{ id: 'v1', score: 0.87 }] }),
-      new InMemoryIndex(),
+      await indexed('v1', 'n1'),
       lookup,
     );
     const out = await service.associate('which database', 5, 'neural');
@@ -41,6 +55,38 @@ describe('vector recall as a third result list', () => {
       expect.objectContaining({ id: 'v1', score: 0.87, source: 'vector', title: 'Database decision' }),
     ]);
     expect(out.results.map(r => r.id)).toEqual(['n1']);
+  });
+
+  it('drops vector hits at or below min_score and ids the index does not know', async () => {
+    const service = new NeuralMemoryService(
+      neuralWith({
+        results: [{ id: 'n1', score: 0.4 }, { id: 'missing-neural', score: 0.9 }],
+        vectorAvailable: true,
+        vectorResults: [
+          { id: 'v1', score: 0.87 },
+          { id: 'weak', score: 0 },
+          { id: 'stale', score: -0.2 },
+          { id: 'gone', score: 0.95 },
+        ],
+      }),
+      await indexed('v1', 'n1', 'weak', 'stale'),
+      lookup,
+      0,
+    );
+    const out = await service.associate('which database', 5, 'neural');
+    expect(out.vector_results.map(hit => hit.id)).toEqual(['v1']);
+    expect(out.results.map(hit => hit.id)).toEqual(['n1']);
+  });
+
+  it('honours a configured min_score above zero', async () => {
+    const service = new NeuralMemoryService(
+      neuralWith({ vectorAvailable: true, vectorResults: [{ id: 'v1', score: 0.2 }, { id: 'weak', score: 0.05 }] }),
+      await indexed('v1', 'weak'),
+      lookup,
+      0.1,
+    );
+    const out = await service.associate('query', 5, 'neural');
+    expect(out.vector_results.map(hit => hit.id)).toEqual(['v1']);
   });
 
   it('reports vectors unavailable when the sidecar has them off', async () => {

@@ -12,7 +12,23 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 - Delete is not exposed. Archive is a metadata update.
 - Maintenance prepares a dry-run changeset first; `apply_changeset` is separate.
 - HTTP binds to `127.0.0.1` by default. Non-loopback bind refuses to start without a bearer token.
-- Index and audit state live outside the vault content tree in the examples.
+- Index and audit state live outside the vault content tree in the examples. The index is rebuilt in memory from Markdown; there is no `index.sqlite`.
+
+## Tool catalogs
+
+`MEMORY_TOOLSET` (or `toolset` in the config file) chooses which MCP tools are advertised. The default is **`full`**, so existing clients keep every current tool name. An unknown value refuses to start.
+
+| Profile | What it advertises |
+|---|---|
+| `minimal` | `retrieve_context`, `search_memory`, `recall`, `remember`, `update_memory`, `archive_memory`, `find_related`, `search_people`, `find_name_days`, `resolve_entity` |
+| `standard` | minimal, plus graph, claim, and source tools (`create_relation`, `create_claim`, `create_source`, `distill_next_chunk`, and the rest of that family) |
+| `full` | every tool, including aliases (`people`, `notes`, …), maintenance (`apply_changeset`, `reindex`, …), and `agent_profiles` |
+
+`standard` can prepare a merge changeset, but `apply_changeset` is maintenance and stays on `full`. The safety model does not change with the profile: `read_only` still defaults to true, writes still require `expected_revision`, nothing is deleted, and maintenance is still dry-run then `apply_changeset`.
+
+`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the same result envelope on every tool. It is off by default. Results are still returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates.
+
+`npm run measure:tools` prints tools/list size per profile (js-tiktoken `o200k_base`).
 
 ## Native macOS development
 
@@ -115,7 +131,7 @@ python -m pytest neural/tests
 
 ## Known MVP boundaries
 
-- Full-text search is deterministic local substring/metadata search; the index port is ready for FTS/vector/hybrid adapters, but embeddings are not required or implemented.
+- Full-text search is deterministic local substring/metadata search over the in-memory index rebuilt from Markdown. Embeddings are not required. An optional dense-vector list lives in the BDH sidecar (`BDH_VECTOR=1`) and drops hits at or below `neural.vector_min_score` (default 0).
 - An experimental BDH associative-memory sidecar can be turned on beside the substring index. It is off by default, stores nothing in the vault, and the server keeps working if it is down. Learned hits are advisory. See [docs/neural-memory.md](./docs/neural-memory.md).
 - Multi-file changesets validate all preconditions before writing, but POSIX filesystems cannot provide a single atomic rename across multiple files. Audit snapshots and recovery changesets limit impact; a future journal adapter can strengthen crash recovery.
 - Exact semantic duplicate detection and content rewriting remain the caller LLM's job. The server only validates structured proposals.
