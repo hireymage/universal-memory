@@ -19,6 +19,9 @@ export interface NeuralAssociateResponse {
   available: boolean;
   results: NeuralHit[];
   warning?: string;
+  /** Dense-vector layer (semantic similarity). Absent when the sidecar has vectors off. */
+  vectorAvailable?: boolean;
+  vectorResults?: NeuralHit[];
 }
 
 export interface NeuralRebuildResponse {

@@ -226,7 +226,7 @@ describe('BDH adapter', () => {
     expect(health.available).toBe(true);
     expect(health.entities).toBe(2);
     const associated = await client.associate('Comandante', 5);
-    expect(associated).toEqual({ available: true, results: [{ id: 'gift', score: 0.44 }] });
+    expect(associated).toEqual({ available: true, results: [{ id: 'gift', score: 0.44 }], vectorAvailable: false, vectorResults: [] });
     expect(requests.some(item => item.authorization === 'Bearer secret')).toBe(true);
     const rebuilt = await client.rebuild([
       { id: 'a', title: 'A', aliases: [], content: 'one' },

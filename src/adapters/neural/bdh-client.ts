@@ -34,7 +34,13 @@ export class BdhSidecarClient implements NeuralAssociativeMemory {
     const response = await this.post('/v1/associate', { query, limit }, this.options.timeoutMs);
     if (!response.ok) return { available: false, results: [], warning: response.warning };
     const results = Array.isArray(response.body.results) ? response.body.results.flatMap(readHit) : [];
-    return { available: true, results };
+    const vectorResults = Array.isArray(response.body.vector_results) ? response.body.vector_results.flatMap(readHit) : [];
+    return {
+      available: true,
+      results,
+      vectorAvailable: response.body.vector_available === true,
+      vectorResults,
+    };
   }
 
   async rebuild(documents: NeuralDocument[]): Promise<NeuralRebuildResponse> {

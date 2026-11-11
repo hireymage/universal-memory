@@ -32,6 +32,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
  && python3 -m venv /opt/neural \
  && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch \
  && apt-get purge -y python3-venv && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# Vector layer: sentence-transformers plus the multilingual e5-small weights, baked in at build time
+# so the running container needs no network (HF_HUB_OFFLINE=1).
+ARG EMBED_MODEL=intfloat/multilingual-e5-small
+RUN /opt/neural/bin/pip install --no-cache-dir --extra-index-url https://pypi.org/simple sentence-transformers \
+ && mkdir -p /opt/models \
+ && SENTENCE_TRANSFORMERS_HOME=/opt/models /opt/neural/bin/python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('EMBED_MODEL','${EMBED_MODEL}'), cache_folder='/opt/models')" \
+ && rm -rf /root/.cache/pip
+ENV SENTENCE_TRANSFORMERS_HOME=/opt/models HF_HUB_OFFLINE=1
 RUN groupadd --system --gid 10001 memory \
  && useradd --system --uid 10001 --gid memory --home-dir /app --shell /usr/sbin/nologin memory \
  && mkdir -p /vault /state /state/neural /config /tmp/torch \

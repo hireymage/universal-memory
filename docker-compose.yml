@@ -18,6 +18,8 @@ services:
       MEMORY_API_TOKEN_FILE: /run/secrets/memory_api_token
       UMM_NEURAL: ${UMM_NEURAL:-1}
       BDH_NEURONS: ${BDH_NEURONS:-4096}
+      # Dense-vector layer (third result list). Off by default; BDH_VECTOR=1 turns it on.
+      BDH_VECTOR: ${BDH_VECTOR:-0}
       # Separate state per neuron count: the old 1024-neuron state is kept untouched beside it.
       BDH_STATE_DIR: /state/neural-${BDH_NEURONS:-4096}
     secrets:
