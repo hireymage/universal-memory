@@ -17,6 +17,7 @@ services:
     environment:
       MEMORY_API_TOKEN_FILE: /run/secrets/memory_api_token
       UMM_NEURAL: ${UMM_NEURAL:-1}
+      BDH_NEURONS: ${BDH_NEURONS:-4096}
     secrets:
       - memory_api_token
     ports:
