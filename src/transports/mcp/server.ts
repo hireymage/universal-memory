@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Services } from '../../composition.js';
 import { MemoryError } from '../../domain/errors.js';
 import { summarize } from '../../domain/types.js';
+import { distillNextChunk } from '../../application/distill-service.js';
 
 const profileTexts = z.object({ machine_en: z.string().min(1), human_cs: z.string().min(1) });
 const languagePolicy = z.object({ user_language: z.string().min(2).max(16), internal_language: z.string().min(2).max(16), agent_language: z.string().min(2).max(16) }).strict();
@@ -87,6 +88,7 @@ export function createMemoryMcpServer(s:Services):McpServer{
  tool('find_suspect_claims','Read-only suspect scan: claims sharing the provenance (source_id, and predicate when given) of a claim already recorded in error. Returns candidates only — it never writes, audits, or auto-fixes anything; a human decides.',z.object({source_id:z.string().min(1),predicate:z.string().optional(),entity_id:z.string().optional(),limit:z.number().int().min(1).max(1000).default(100)}).strict(),i=>s.graph.findSuspectClaims(i));
  tool('create_source','Register a first-class source entity. Identity is the typed triple (provider, identity_type, identity_value) — web URLs must use identity_type: url, never conversation_id. Legacy conversation_id/content_hash imports keep working; with if_exists:return_existing the import is idempotent.',z.object({title:z.string().min(1),provider:z.string().min(1),identity_type:z.enum(['conversation','content_hash','url']).optional(),identity_value:z.string().optional(),conversation_id:z.string().optional(),content_hash:z.string().optional(),original_file:z.string().optional(),message_range:z.unknown(),url:z.string().optional(),content:z.string().optional(),metadata:metadata.optional(),if_exists:z.enum(['error','return_existing']).default('error'),client:z.string().optional()}).strict(),i=>s.sources.createSource(i,i.client));
  tool('get_source','Read one source entity by stable ID.',z.object({id:z.string().min(1)}).strict(),i=>s.sources.getSource(i.id));
+tool('distill_next_chunk','Return the next bounded chunk of a stored source transcript so the caller can distill notes from it. Omit cursor (or pass 0) for the first chunk; pass next_cursor from the previous result to continue. Messages are numbered; every note you write from a chunk must set source_ids to [source_id] and cite the message numbers. Paging is stateless: store the cursor you processed.',z.object({source_id:z.string().min(1),cursor:z.number().int().min(0).default(0),max_chars:z.number().int().min(2000).max(200000).default(60000)}).strict(),i=>distillNextChunk(s.memory,i));
  tool('find_source','Find sources by import identity: provider plus identity_type/identity_value, conversation_id, or content_hash.',z.object({provider:z.string().min(1),identity_type:z.enum(['conversation','content_hash','url']).optional(),identity_value:z.string().optional(),conversation_id:z.string().optional(),content_hash:z.string().optional()}).strict(),i=>s.sources.findSource(i));
  return server;
 }
