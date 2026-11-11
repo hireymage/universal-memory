@@ -8,6 +8,10 @@ describe('relation bullets', () => {
     expect(relationBulletLine(target, 'R1')).toBe('- [[tiiny-ai-kickstarter|Tiiny-AI-Kickstarter]] <!-- rel:R1 -->');
   });
 
+  it('qualifies folder index notes with their folder', () => {
+    expect(relationBulletLine({ title: 'Homelab', path: '02 Projects/homelab/index.md' }, 'R9')).toBe('- [[homelab/index|Homelab]] <!-- rel:R9 -->');
+  });
+
   it('rewrites a legacy title link and leaves correct bullets and other text unchanged', () => {
     const content = [
       '## Relations',
@@ -30,5 +34,13 @@ describe('relation bullets', () => {
     expect(first.unresolved).toEqual(['GONE']);
     const again = rewriteRelationBullets(rewriteRelationBullets(content, new Map([['GONE', target]])).content, new Map([['GONE', target]]));
     expect(again.changed).toBe(0);
+  });
+});
+
+describe('legacy marker ids', () => {
+  it('rewrites markers that contain hyphens, such as phase-3 relation ids', () => {
+    const result = rewriteRelationBullets('- [[Old]] <!-- rel:p3r-abc123 -->', new Map([['p3r-abc123', target]]));
+    expect(result.changed).toBe(1);
+    expect(result.content).toBe('- [[tiiny-ai-kickstarter|Tiiny-AI-Kickstarter]] <!-- rel:p3r-abc123 -->');
   });
 });

@@ -159,8 +159,11 @@ const RELATIONS_HEADING = '## Relations';
  */
 export function relationBulletLine(target: { title: string; path: string }, relationId: string): string {
   // Obsidian resolves a link by file name, so link the basename and show the title as alias text.
-  const basename = target.path.replace(/^.*\//, '').replace(/\.md$/, '');
-  return `- [[${basename}|${target.title}]] <!-- rel:${relationId} -->`;
+  const parts = target.path.replace(/\.md$/, '').split('/');
+  const name = parts[parts.length - 1] ?? '';
+  // Folder notes are all called index.md; qualify them with the folder so the link is unambiguous.
+  const link = name === 'index' && parts.length > 1 ? `${parts[parts.length - 2]}/index` : name;
+  return `- [[${link}|${target.title}]] <!-- rel:${relationId} -->`;
 }
 
 export function appendRelationLine(content: string, target: { title: string; path: string }, relationId: string): string {
@@ -182,7 +185,7 @@ export function removeRelationLines(content: string, relationId: string): { cont
 
 /** Identity of a relation: (source entity, type, target entity). */
 export const relationIdentity = (relation: { type: string; target_id: string }): string => `${relation.type}|${relation.target_id}`;
-const RELATION_BULLET = /^- \[\[([^\]\n]*)\]\] <!-- rel:([A-Za-z0-9]+) -->$/gm;
+const RELATION_BULLET = /^- \[\[([^\]\n]*)\]\] <!-- rel:([A-Za-z0-9-]+) -->$/gm;
 
 /**
  * Rewrites legacy relation bullets (`- [[Title]] <!-- rel:ID -->`) to the
