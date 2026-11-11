@@ -44,7 +44,8 @@ export class BdhSidecarClient implements NeuralAssociativeMemory {
   }
 
   async rebuild(documents: NeuralDocument[]): Promise<NeuralRebuildResponse> {
-    const timeout = Math.min(60_000, Math.max(this.options.timeoutMs, 15_000));
+    // A rebuild batch embeds 40 documents on CPU; a 1024-dim model needs far longer than 60 s per batch.
+    const timeout = Math.min(600_000, Math.max(this.options.timeoutMs, 15_000));
     const chunks = documents.length ? chunk(documents.map(boundDocument), REBUILD_CHUNK) : [[]];
     let indexed = 0;
     for (let i = 0; i < chunks.length; i++) {
