@@ -9,6 +9,7 @@ export interface BdhClientOptions {
 
 const MAX_CONTENT = 80_000;
 const REBUILD_CHUNK = 40;
+const REBUILD_TIMEOUT_MS = 900_000;
 
 /**
  * HTTP client for the Python BDH sidecar. Every method resolves. A refused
@@ -44,8 +45,9 @@ export class BdhSidecarClient implements NeuralAssociativeMemory {
   }
 
   async rebuild(documents: NeuralDocument[]): Promise<NeuralRebuildResponse> {
-    // A rebuild batch embeds 40 documents on CPU; a 1024-dim model needs far longer than 60 s per batch.
-    const timeout = Math.min(600_000, Math.max(this.options.timeoutMs, 15_000));
+    // A rebuild batch embeds 40 documents on CPU, which can take minutes with a large model.
+    // This is a maintenance call, so it does not use the per-request neural.timeout_ms (schema max 120 s).
+    const timeout = REBUILD_TIMEOUT_MS;
     const chunks = documents.length ? chunk(documents.map(boundDocument), REBUILD_CHUNK) : [[]];
     let indexed = 0;
     for (let i = 0; i < chunks.length; i++) {
