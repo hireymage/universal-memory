@@ -289,15 +289,33 @@ class AssociativeBDH(nn.Module):
         query_activity = query_activity / norm
         recalled = inhibit(self.synapse.readout(query_activity))
         scored: list[Association] = []
+        query_words = list(dict.fromkeys(tokens))
+        query_codes = [torch.tensor(_indices(word, self.n, self.k, self.seed)) for word in query_words]
         for entity_id, entity in self.entities.items():
-            # Direct: the note literally uses a query word. Synaptic: a word in
-            # the note was wired to the query by co-activation in some context.
-            # max keeps the score on the cosine scale.
-            score = max(self._best_word(query_activity, entity.indices), self._best_word(recalled, entity.indices))
+            # Coverage: for each distinct query word, how well its best-matching
+            # note word shares neurons with it; averaged over the query. A note
+            # that contains every query word outranks one that contains a single
+            # word, and long notes are not penalised for their length. Synaptic:
+            # recalled activity that the note's words excite.
+            direct = self._coverage(query_codes, entity.indices)
+            synaptic = self._best_word(recalled, entity.indices)
+            score = max(direct, synaptic)
             if score > 0.0:
                 scored.append(Association(id=entity_id, score=round(score, 6)))
         scored.sort(key=lambda item: (-item.score, item.id))
         return scored[:limit]
+
+    def _coverage(self, query_codes: list[torch.Tensor], indices: torch.Tensor) -> float:
+        """Mean over query words of the best neuron overlap with any word of the note."""
+        if not query_codes or indices.numel() == 0:
+            return 0.0
+        total = 0.0
+        for code in query_codes:
+            shared = (indices.unsqueeze(-1) == code.view(1, 1, -1)).sum(dim=(1, 2))
+            eligible = shared >= self.min_overlap
+            if bool(eligible.any()):
+                total += float(shared[eligible].max()) / self.k
+        return total / len(query_codes)
 
     def _best_word(self, pattern: torch.Tensor, indices: torch.Tensor) -> float:
         if indices.numel() == 0:
