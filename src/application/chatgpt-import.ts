@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { parseChatGptExport, type ParsedConversation } from '../domain/chatgpt-export.js';
+import { parseClaudeExport } from '../domain/claude-export.js';
 import { MemoryService } from './memory-service.js';
 
 /**
- * Dedup-aware ChatGPT export import: one `source` entity per conversation,
+ * Dedup-aware chat-export import: one `source` entity per conversation,
  * created through MemoryService.createWithDedup so re-imports surface a
  * dedup decision (identical title → score 1.0 → 'likely_duplicate') without
- * ever blocking the create. Routing lands in 13 Resources/Sources/chatgpt/
+ * ever blocking the create. Routing lands in 13 Resources/Sources/<provider>/
  * via the configured `source` route ({provider} comes from metadata.provider).
  */
 
@@ -18,6 +19,11 @@ export interface ChatGptImportResult {
   path: string;
 }
 
+export interface ConversationImportOptions {
+  provider: 'chatgpt' | 'claude';
+  origin: string;
+}
+
 export function buildTranscriptMarkdown(conversation: ParsedConversation): string {
   const lines = [`# ${conversation.title}`];
   for (const message of conversation.messages) {
@@ -26,8 +32,13 @@ export function buildTranscriptMarkdown(conversation: ParsedConversation): strin
   return `${lines.join('\n')}\n`;
 }
 
-export async function importChatGptExport(memory: MemoryService, inputPath: string, client?: string): Promise<ChatGptImportResult[]> {
-  const conversations = await parseChatGptExport(inputPath);
+export async function importConversations(
+  memory: MemoryService,
+  inputPath: string,
+  conversations: ParsedConversation[],
+  options: ConversationImportOptions,
+  client?: string,
+): Promise<ChatGptImportResult[]> {
   const results: ChatGptImportResult[] = [];
   for (const conversation of conversations) {
     const { entity, dedup } = await memory.createWithDedup({
@@ -35,8 +46,8 @@ export async function importChatGptExport(memory: MemoryService, inputPath: stri
       title: conversation.title,
       content: buildTranscriptMarkdown(conversation),
       metadata: {
-        provider: 'chatgpt',
-        origin: 'chatgpt-export',
+        provider: options.provider,
+        origin: options.origin,
         conversation_id: conversation.id,
         identity_type: 'conversation',
         identity_value: conversation.id,
@@ -55,4 +66,14 @@ export async function importChatGptExport(memory: MemoryService, inputPath: stri
     });
   }
   return results;
+}
+
+export async function importChatGptExport(memory: MemoryService, inputPath: string, client?: string): Promise<ChatGptImportResult[]> {
+  const conversations = await parseChatGptExport(inputPath);
+  return importConversations(memory, inputPath, conversations, { provider: 'chatgpt', origin: 'chatgpt-export' }, client);
+}
+
+export async function importClaudeExport(memory: MemoryService, inputPath: string, client?: string): Promise<ChatGptImportResult[]> {
+  const conversations = await parseClaudeExport(inputPath);
+  return importConversations(memory, inputPath, conversations, { provider: 'claude', origin: 'claude-export' }, client);
 }

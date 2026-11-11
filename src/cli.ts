@@ -17,18 +17,33 @@ program.command('serve').description('Serve configured MCP transport and REST AP
 });
 program.command('inspect').description('Read-only vault inspection report').action(async()=>{const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose({...config,read_only:true});console.log(JSON.stringify(await services.maintenance.inspect({kind:'vault'}),null,2));});
 program.command('reindex').description('Rebuild disposable index from Markdown').action(async()=>{const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose(config);console.log(JSON.stringify(await services.maintenance.reindex(),null,2));});
+// Commander passes the positional <path> first, then options; the old handler read it from the options object.
+const exportSummary=(file:string,conversations:Array<{id:string;title:string;createdUtc:string;updatedUtc:string;messages:unknown[]}>)=>JSON.stringify({file,conversation_count:conversations.length,conversations:conversations.map(c=>({id:c.id,title:c.title,created:c.createdUtc,updated:c.updatedUtc,message_count:c.messages.length}))},null,2);
 program.command('import-chatgpt')
  .description('Import a ChatGPT export (.zip or conversations.json) as dedup-aware source entities')
  .argument('<path>','export file: .zip archive or plain conversations.json')
  .option('--dry-run','parse and print a JSON summary without writing anything')
- .action(async(opts:{dryRun?:boolean},args:{path:string})=>{
+ .action(async(filePath:string,opts:{dryRun?:boolean})=>{
   const config=await loadConfig(program.opts<{config:string}>().config);
   const { parseChatGptExport }=await import('./domain/chatgpt-export.js');
-  const conversations=await parseChatGptExport(args.path);
-  if(opts.dryRun){console.log(JSON.stringify({file:args.path,conversation_count:conversations.length,conversations:conversations.map(c=>({id:c.id,title:c.title,created:c.createdUtc,updated:c.updatedUtc,message_count:c.messages.length}))},null,2));return;}
+  const conversations=await parseChatGptExport(filePath);
+  if(opts.dryRun){console.log(exportSummary(filePath,conversations));return;}
   const services=await compose(config);
   const { importChatGptExport }=await import('./application/chatgpt-import.js');
-  console.log(JSON.stringify(await importChatGptExport(services.memory,args.path),null,2));
+  console.log(JSON.stringify(await importChatGptExport(services.memory,filePath),null,2));
+ });
+program.command('import-claude')
+ .description('Import a Claude.ai data export (.zip or conversations.json) as dedup-aware source entities')
+ .argument('<path>','export file: .zip archive or plain conversations.json')
+ .option('--dry-run','parse and print a JSON summary without writing anything')
+ .action(async(filePath:string,opts:{dryRun?:boolean})=>{
+  const config=await loadConfig(program.opts<{config:string}>().config);
+  const { parseClaudeExport }=await import('./domain/claude-export.js');
+  const conversations=await parseClaudeExport(filePath);
+  if(opts.dryRun){console.log(exportSummary(filePath,conversations));return;}
+  const services=await compose(config);
+  const { importClaudeExport }=await import('./application/chatgpt-import.js');
+  console.log(JSON.stringify(await importClaudeExport(services.memory,filePath),null,2));
  });
 program.command('phase3')
  .description('Phase-3 deterministic migration runner (relations/claims/sources)')
