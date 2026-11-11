@@ -1,3 +1,4 @@
+import { rewriteRelationBullets } from '../domain/model.js';
 import { ulid } from 'ulid';
 import type { AuditSink, ChangesetStore, EntityStorage, SearchIndex } from '../ports/index.js';
 import type { ChangeOperation, Changeset, Diagnostic, Entity, EntityMetadata, Scope } from '../domain/types.js';
@@ -87,6 +88,25 @@ export class MaintenanceService{
     throw error;
    }
    cs.status='applied';await this.changesets.save(cs);return {changeset:cs,entities};}
+ async repairRelationLinks(scope:Scope={kind:'vault'}){
+  // Dry run: builds a changeset from legacy relation bullets; nothing is written until apply_changeset.
+  const operations:ChangeOperation[]=[];const unresolved:Array<{entity_id:string;relation_id:string}>=[];
+  const entities=[];for await(const e of this.storage.scan())if(entityInScope(e,scope))entities.push(e);
+  const byId=new Map<string,Entity>();for(const e of entities)byId.set(e.metadata.id,e);
+  for(const e of entities){
+    if(!/<!--\s*rel:/.test(e.content))continue;
+    const targets=new Map<string,{title:string;path:string}>();
+    for(const rel of (e.metadata.relations??[]) as Array<{id:string;target_id:string}>){
+      const target=byId.get(rel.target_id)??await this.memory.get(rel.target_id).catch(()=>undefined);
+      if(target)targets.set(rel.id,{title:target.metadata.title,path:target.path});
+    }
+    const result=rewriteRelationBullets(e.content,targets);
+    for(const id of result.unresolved)unresolved.push({entity_id:e.metadata.id,relation_id:id});
+    if(result.changed>0)operations.push({kind:'update',entity_id:e.metadata.id,expected_revision:e.revision,patch:{content:result.content}});
+  }
+  const changeset=await this.prepare(`Rewrite legacy relation links to basename aliases (${operations.length} entities)`,operations,unresolved.map(u=>({code:'UNRESOLVED_RELATION',severity:'warning',message:`Relation ${u.relation_id} has no resolvable target`,entity_id:u.entity_id})) as Diagnostic[]);
+  return {changeset,entities_to_change:operations.length,unresolved};
+ }
  async migrateSchema(target:number,scope:Scope={kind:'vault'}):Promise<Changeset>{const operations:ChangeOperation[]=[];for await(const e of this.storage.scan()){if(!entityInScope(e,scope))continue;if(e.metadata.schema_version<target)operations.push({kind:'update',entity_id:e.metadata.id,expected_revision:e.revision,patch:{metadata:{schema_version:target}}});}return this.prepare(`Migrate schema to ${target}`,operations);}
  async history(entityId?:string,limit=100){return this.audit.list(entityId,limit);}
  async prepareRollback(eventId:string):Promise<Changeset>{const events=await this.audit.list(undefined,10000);const event=events.find(item=>item.id===eventId);if(!event?.entity_id)throw new MemoryError('NOT_FOUND',`Audit event not found: ${eventId}`);

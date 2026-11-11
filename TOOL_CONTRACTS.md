@@ -123,6 +123,7 @@ Two protection rules hold everywhere:
 | `prepare_normalization` | `{description,scope,operations[]}` | persisted dry-run changeset only |
 | `apply_changeset` | `{changeset_id,client?}` | validates every revision, then applies and audits |
 | `migrate_schema` | `{target_version,scope}` | dry-run changeset only |
+| `repair_relation_links` | `{scope?}` | dry-run changeset only | Rewrites legacy `- [[Title]] <!-- rel:ID -->` bullets to `- [[basename|Title]] <!-- rel:ID -->` so Obsidian resolves them. One-time migration for vaults written before this change; apply with `apply_changeset`. Idempotent. |
 | `reindex` | `{}` | rebuilt derived index counts |
 | `audit_history` | `{action:"list",entity_id?,limit}` or `{action:"prepare_rollback",event_id}` | events or inverse dry-run changeset |
 

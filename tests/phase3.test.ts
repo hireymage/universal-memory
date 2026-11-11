@@ -130,7 +130,7 @@ describe('planRelations (batch 3A)', () => {
     expect(rel[0]!.target_id).toBe(f.target.metadata.id);
     expect(after.metadata).not.toHaveProperty('relationships');
     const file = await readFile(path.join(f.vault, after.path), 'utf8');
-    expect(file).toContain(`- [[Target Note]] <!-- rel:${rel[0]!.id} -->`);
+    expect(file).toContain(`- [[${f.target.path.replace(/^.*\//, '').replace(/\.md$/, '')}|Target Note]] <!-- rel:${rel[0]!.id} -->`);
     // audit event with the migration client
     const events = await f.services.audit.list(f.good.metadata.id, 10);
     expect(events.some(ev => ev.operation === 'create_relation' && ev.client === 'phase-3-migration')).toBe(true);

@@ -191,7 +191,7 @@ export class GraphService {
     const metadata: EntityMetadata = { ...source.metadata, relations: [...structured, relation] };
     if (remainingLegacy.length) metadata.relationships = remainingLegacy;
     else delete metadata.relationships;
-    const after = await this.write(source, metadata, appendRelationLine(source.content, target.metadata.title, relation.id), 'create_relation', client, {
+    const after = await this.write(source, metadata, appendRelationLine(source.content, { title: target.metadata.title, path: target.path }, relation.id), 'create_relation', client, {
       relation_id: relation.id, type: relation.type, target_id: target.metadata.id,
       legacy_collapsed: legacyEntries.length - remainingLegacy.length,
     }, input.timestamp);

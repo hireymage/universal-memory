@@ -82,7 +82,7 @@ describe('relations', () => {
     expect(first.created).toBe(true);
     const file = await readFile(path.join(vault, cpu.path), 'utf8');
     expect(file).toContain('## Relations');
-    expect(file).toContain(`- [[Motherboard]] <!-- rel:${first.relation.id} -->`);
+    expect(file).toContain(`- [[${board.path.replace(/^.*\//, '').replace(/\.md$/, '')}|Motherboard]] <!-- rel:${first.relation.id} -->`);
     const second = await services.graph.createRelation({ entity_id: cpu.metadata.id, relation_type: 'installed_in', target_id: board.metadata.id, expected_revision: cpu.revision }) as { created: boolean; relation: { id: string } };
     expect(second.created).toBe(false);
     expect(second.relation.id).toBe(first.relation.id);
