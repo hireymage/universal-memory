@@ -138,20 +138,24 @@ class HebbianSynapse(nn.Module):
 def fast_sigma(codes: torch.Tensor, decay: float) -> torch.Tensor:
     """Within-context Hebbian state. Discarded after the note is consolidated.
 
-    Online rule, one token at a time, matching BDH inference rather than the
-    parallel attention kernel in the paper's toy training code:
+    Online rule, one token at a time (BDH inference):
 
         sigma += outer(Y, x)     # Y(i) * X(j)
         Y = decay * Y + x
+
+    Computed in closed form: the eligibility trace before token t is
+    Y_t = sum_{s<t} decay^(t-1-s) x_s, so sigma = Y^T X. This is the same sum as
+    the loop, but one matrix product per note instead of one outer product per
+    token, which keeps rebuilds fast for large neuron counts.
     """
     tokens, n = codes.shape
-    sigma = torch.zeros(n, n)
-    trace = torch.zeros(n)
-    for t in range(tokens):
-        activity = codes[t]
-        sigma = sigma + torch.outer(trace, activity)
-        trace = decay * trace + activity
-    return sigma
+    if tokens == 0:
+        return torch.zeros(n, n)
+    positions = torch.arange(tokens, dtype=codes.dtype)
+    gap = positions[:, None] - positions[None, :] - 1  # t - s - 1
+    weights = torch.where(gap >= 0, torch.pow(torch.tensor(decay, dtype=codes.dtype), gap.clamp(min=0)), torch.zeros(()))
+    trace = weights @ codes
+    return trace.transpose(0, 1) @ codes
 
 
 def slow_delta(codes: torch.Tensor, decay: float) -> torch.Tensor:
