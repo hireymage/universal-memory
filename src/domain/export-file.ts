@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
 import { extractZipEntry } from './chatgpt-export.js';
+import { readBoundedFile } from './bounded-read.js';
 import { MemoryError } from './errors.js';
 
 /**
@@ -8,12 +8,7 @@ import { MemoryError } from './errors.js';
  * top-level array of conversations. Shared by the ChatGPT and Claude importers.
  */
 export async function readExportRoot(filePath: string, zipEntry: string): Promise<unknown[]> {
-  let buffer: Buffer;
-  try {
-    buffer = await readFile(filePath);
-  } catch (error) {
-    throw new MemoryError('VALIDATION_ERROR', `Cannot read export: ${filePath}`, error instanceof Error ? error.message : String(error));
-  }
+  const buffer = await readBoundedFile(filePath);
   let root: unknown;
   try {
     root = JSON.parse((filePath.toLowerCase().endsWith('.zip') ? extractZipEntry(buffer, zipEntry) : buffer).toString('utf8'));

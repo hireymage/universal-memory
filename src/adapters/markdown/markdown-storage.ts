@@ -8,7 +8,9 @@ import { syncCollectionIndexes, type SyncStorage } from '../../domain/collection
 import type { EntityStorage, SearchIndex } from '../../ports/index.js';
 import type { Entity, EntityDraft, EntityMetadata, EntityPatch, ExternalFile } from '../../domain/types.js';
 import { MemoryError } from '../../domain/errors.js';
+import { assertContained, parseYamlMapping } from '../../domain/path-safety.js';
 import { StorageRouter } from '../../domain/routing.js';
+import { vaultLockActive, withVaultLock } from '../../domain/vault-lock.js';
 
 const REQUIRED = ['id', 'type', 'title', 'created_at', 'updated_at', 'schema_version'] as const;
 const wikilinkPattern = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
@@ -24,9 +26,11 @@ export class MarkdownStorage implements EntityStorage {
     private readonly router: StorageRouter,
     private readonly index: SearchIndex,
     private readonly readOnly: boolean,
+    private readonly followSymlinks = false,
   ) {}
 
   async create(draft: EntityDraft): Promise<Entity> {
+    if (!vaultLockActive()) return withVaultLock(() => this.create(draft));
     this.assertWritable();
     const now = new Date().toISOString();
     const id = typeof draft.metadata?.id === 'string' ? draft.metadata.id : ulid();
@@ -51,7 +55,9 @@ export class MarkdownStorage implements EntityStorage {
     const routed = this.router.route(draft.type, draft.title, Number.isNaN(routeTimestamp.getTime()) ? new Date() : routeTimestamp, metadata);
     if (routed.backend !== 'markdown') throw new MemoryError('VALIDATION_ERROR', `Unsupported backend: ${routed.backend}`);
     let target = routed.absolutePath;
-    try { await stat(target); target = withSuffix(target, id.slice(-6)); } catch { /* available */ }
+    await this.guard(target);
+    try { await stat(target); target = withSuffix(target, id.slice(-6)); await this.guard(target); }
+    catch (error) { if (error instanceof MemoryError) throw error; /* available */ }
     const entity = await this.writeNew(target, metadata, draft.content ?? '');
     await this.index.upsert(entity);
     return entity;
@@ -68,7 +74,7 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   async getByPath(relativePath: string): Promise<Entity | undefined> {
-    const absolute = this.router.resolve(relativePath);
+    const absolute = await this.locate(relativePath);
     try { return this.parse(absolute, await readFile(absolute, 'utf8')); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
@@ -77,6 +83,7 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   async update(id: string, patch: EntityPatch, expectedRevision: string): Promise<Entity> {
+    if (!vaultLockActive()) return withVaultLock(() => this.update(id, patch, expectedRevision));
     this.assertWritable();
     const current = await this.get(id);
     if (!current) throw new MemoryError('NOT_FOUND', `Entity not found: ${id}`);
@@ -91,17 +98,18 @@ export class MarkdownStorage implements EntityStorage {
       status: typeof patch.metadata?.status === 'string' ? patch.metadata.status : current.metadata.status,
       schema_version: typeof patch.metadata?.schema_version === 'number' ? patch.metadata.schema_version : current.metadata.schema_version,
     };
-    const currentPath=this.router.resolve(current.path);
-    let targetPath=currentPath;
+    const currentPath = await this.locate(current.path);
+    let targetPath = currentPath;
     // Explicit type change (update_memory / memory.update with the caller's
     // expected_revision). The file is renamed onto the new type's route.
     // MemoryService records from_path/to_path on the update audit event.
     // Health checks must not call this; they only prepare a dry-run changeset.
     if(metadata.type!==current.metadata.type){
       targetPath=this.router.route(metadata.type,metadata.title,new Date(),metadata).absolutePath;
+      await this.guard(targetPath);
       if(targetPath!==currentPath){
         await mkdir(path.dirname(targetPath),{recursive:true});
-        try{await stat(targetPath);throw new MemoryError('CONFLICT',`Move target already exists: ${targetPath}`);}catch(error){if(error instanceof MemoryError)throw error;}
+        try{await stat(targetPath);throw new MemoryError('CONFLICT',`Move target already exists: ${this.display(targetPath)}`);}catch(error){if(error instanceof MemoryError)throw error;}
         await rename(currentPath,targetPath);
       }
     }
@@ -119,6 +127,7 @@ export class MarkdownStorage implements EntityStorage {
    * claim key dropped by restore — actually disappear from frontmatter.
    */
   async write(id: string, metadata: EntityMetadata, content: string, expectedRevision: string, options?: { timestamp?: string }): Promise<Entity> {
+    if (!vaultLockActive()) return withVaultLock(() => this.write(id, metadata, content, expectedRevision, options));
     this.assertWritable();
     const current = await this.get(id);
     if (!current) throw new MemoryError('NOT_FOUND', `Entity not found: ${id}`);
@@ -132,15 +141,16 @@ export class MarkdownStorage implements EntityStorage {
       type: String(metadata.type ?? current.metadata.type),
       title: String(metadata.title ?? current.metadata.title),
     };
-    const currentPath = this.router.resolve(current.path);
+    const currentPath = await this.locate(current.path);
     let targetPath = currentPath;
     if (complete.type !== current.metadata.type) {
       targetPath = this.router.route(complete.type, complete.title, new Date(), complete).absolutePath;
+      await this.guard(targetPath);
       // A type whose route resolves to the current path is an in-place retype.
       // stat() would otherwise see this file and report a false conflict.
       if (targetPath !== currentPath) {
         await mkdir(path.dirname(targetPath), { recursive: true });
-        try { await stat(targetPath); throw new MemoryError('CONFLICT', `Move target already exists: ${targetPath}`); }
+        try { await stat(targetPath); throw new MemoryError('CONFLICT', `Move target already exists: ${this.display(targetPath)}`); }
         catch (error) { if (error instanceof MemoryError) throw error; }
         await rename(currentPath, targetPath);
       }
@@ -153,13 +163,14 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   async move(id: string, destination: string, expectedRevision: string): Promise<Entity> {
+    if (!vaultLockActive()) return withVaultLock(() => this.move(id, destination, expectedRevision));
     this.assertWritable();
     const current = await this.get(id);
     if (!current) throw new MemoryError('NOT_FOUND', `Entity not found: ${id}`);
     if (current.revision !== expectedRevision) throw new MemoryError('CONFLICT', 'Entity changed since it was read', { expectedRevision, actualRevision: current.revision });
     if (!destination.toLowerCase().endsWith('.md')) throw new MemoryError('VALIDATION_ERROR', 'Move destination must be a Markdown file');
-    const source = this.router.resolve(current.path);
-    const target = this.router.resolve(destination);
+    const source = await this.locate(current.path);
+    const target = await this.locate(destination);
     if (source === target) return current;
     try { await stat(target); throw new MemoryError('CONFLICT', `Move target already exists: ${destination}`); }
     catch (error) { if (error instanceof MemoryError) throw error; }
@@ -171,8 +182,9 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   async adopt(relativePath: string, draft: EntityDraft, expectedRevision: string): Promise<Entity> {
+    if (!vaultLockActive()) return withVaultLock(() => this.adopt(relativePath, draft, expectedRevision));
     this.assertWritable();
-    const absolute = this.router.resolve(relativePath);
+    const absolute = await this.locate(relativePath);
     const raw = await readFile(absolute, 'utf8').catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') throw new MemoryError('NOT_FOUND', `External file not found: ${relativePath}`);
       throw error;
@@ -203,11 +215,12 @@ export class MarkdownStorage implements EntityStorage {
    * Resolves the entity first so unknown ids never delete blind; the index
    * entry is retracted before the unlink. */
   async remove(id: string): Promise<void> {
+    if (!vaultLockActive()) return withVaultLock(() => this.remove(id));
     this.assertWritable();
     const current = await this.get(id);
     if (!current) throw new MemoryError('NOT_FOUND', `Entity not found: ${id}`);
     await this.index.remove(id);
-    await unlink(this.router.resolve(current.path));
+    await unlink(await this.locate(current.path));
   }
 
   async *scan(): AsyncIterable<Entity> {
@@ -241,7 +254,7 @@ export class MarkdownStorage implements EntityStorage {
     // js-yaml parses a plain unquoted `2020-01-01` into a Date (its 1.1
     // timestamp tag), while our writer (`YAML.stringify`) emits date strings
     // unquoted — that asymmetry corrupted claim dates on every read-rewrite.
-    const parsed = matter(raw, { engines: { yaml: { parse: (value) => YAML.parse(value) as object, stringify: (value) => YAML.stringify(value) } }, language: 'yaml' });
+    const parsed = matter(raw, { engines: { yaml: { parse: (value) => parseYamlMapping(value), stringify: (value) => YAML.stringify(value) } }, language: 'yaml' });
     for (const key of REQUIRED) if (parsed.data[key] === undefined) throw new MemoryError('VALIDATION_ERROR', `Missing frontmatter field '${key}' in ${path.relative(this.vaultRoot, absolute)}`);
     const metadata = {
       ...parsed.data,
@@ -263,14 +276,16 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   private async writeNew(target: string, metadata: EntityMetadata, content: string): Promise<Entity> {
-    try { await stat(target); throw new MemoryError('CONFLICT', `Target already exists: ${target}`); }
+    await this.guard(target);
+    try { await stat(target); throw new MemoryError('CONFLICT', `Target already exists: ${this.display(target)}`); }
     catch (error) { if (error instanceof MemoryError) throw error; }
     return this.atomicWrite(target, metadata, content);
   }
 
   private async atomicWrite(target: string, metadata: EntityMetadata, content: string): Promise<Entity> {
+    await this.guard(target);
     await mkdir(path.dirname(target), { recursive: true });
-    const raw = matter.stringify(content.trimEnd() ? `${content.trimEnd()}\n` : '', metadata, { engines: { yaml: { parse: (value) => YAML.parse(value) as object, stringify: (value) => YAML.stringify(value) } }, language: 'yaml' });
+    const raw = matter.stringify(content.trimEnd() ? `${content.trimEnd()}\n` : '', metadata, { engines: { yaml: { parse: (value) => parseYamlMapping(value), stringify: (value) => YAML.stringify(value) } }, language: 'yaml' });
     const temp = path.join(path.dirname(target), `.${path.basename(target)}.${ulid()}.tmp`);
     const handle = await open(temp, 'wx', 0o600);
     try { await handle.writeFile(raw, 'utf8'); await handle.sync(); } finally { await handle.close(); }
@@ -279,6 +294,22 @@ export class MarkdownStorage implements EntityStorage {
   }
 
   private assertWritable(): void { if (this.readOnly) throw new MemoryError('READ_ONLY', 'Server is configured read-only'); }
+
+  private async locate(relativePath: string): Promise<string> {
+    const absolute = this.router.resolve(relativePath);
+    await this.guard(absolute);
+    return absolute;
+  }
+
+  private async guard(absolute: string): Promise<void> {
+    if (!this.followSymlinks) await assertContained(this.vaultRoot, absolute);
+  }
+
+  private display(absolute: string): string {
+    const relative = path.relative(this.vaultRoot, absolute);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return 'vault path';
+    return relative;
+  }
 }
 
 function asStrings(value: unknown): string[] { return Array.isArray(value) ? value.map(String) : value == null ? [] : [String(value)]; }

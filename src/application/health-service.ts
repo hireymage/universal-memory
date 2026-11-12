@@ -5,6 +5,7 @@ import type { AuditSink, EntityStorage, SearchIndex } from '../ports/index.js';
 import type { NeuralAssociativeMemory, NeuralRevisionSnapshot } from '../ports/neural.js';
 import type { ChangeOperation, Entity } from '../domain/types.js';
 import { MemoryError } from '../domain/errors.js';
+import { assertContained, confine } from '../domain/path-safety.js';
 import { StorageRouter, type Route } from '../domain/routing.js';
 import { normalizeRelations, rewriteRelationBullets } from '../domain/model.js';
 import { compactForm, normalizedForm } from '../domain/similarity.js';
@@ -522,8 +523,8 @@ export class HealthService {
     await mkdir(this.reportDir, { recursive: true });
     const body = JSON.stringify(report, null, 2);
     const historyName = `${report.generated_at.replace(/[:]/g, '-')}-${report.audit_event_id}.json`;
-    await writeAtomic(path.join(this.reportDir, historyName), body);
-    await writeAtomic(path.join(this.reportDir, 'latest.json'), body);
+    await writeAtomic(this.reportDir, historyName, body);
+    await writeAtomic(this.reportDir, 'latest.json', body);
   }
 }
 
@@ -603,8 +604,12 @@ function countFindings(findings: HealthFinding[]): { by_severity: Record<string,
   return { by_severity, by_code };
 }
 
-async function writeAtomic(target: string, body: string): Promise<void> {
-  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${ulid()}.tmp`);
+async function writeAtomic(root: string, name: string, body: string): Promise<void> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,240}$/.test(name)) throw new MemoryError('VALIDATION_ERROR', 'Unsupported health report name');
+  const target = confine(root, path.join(root, name));
+  await assertContained(root, target);
+  const temp = path.join(root, `.${name}.${ulid()}.tmp`);
+  await assertContained(root, temp);
   await writeFile(temp, body, { mode: 0o600 });
   await rename(temp, target);
 }

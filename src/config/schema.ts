@@ -9,6 +9,12 @@ const configSchema = z.object({
   name: z.string().default('Universal Memory MCP'),
   vault_root: z.string(),
   read_only: z.boolean().default(true),
+  /**
+   * Follow symlinks inside the vault during reads and writes. Off by default:
+   * a directory symlink would otherwise let a move or a routed create write
+   * outside the vault. `MEMORY_ALLOW_SYMLINKS=1` opts back in.
+   */
+  follow_symlinks: z.boolean().optional(),
   audit_dir: z.string().default('./.state/audit'),
   /** MCP catalog. Default `full` keeps every current tool name. `MEMORY_TOOLSET` overrides this. */
   toolset: z.enum(['minimal', 'standard', 'full']).optional(),
@@ -23,6 +29,11 @@ const configSchema = z.object({
     bind: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(3333),
     allowed_origins: z.array(z.string()).default([]),
+    /**
+     * Extra Host / Origin names when the server is not bound to loopback.
+     * Localhost is always included unless `MEMORY_HTTP_ALLOW_ANY_HOST=1`.
+     */
+    allowed_hosts: z.array(z.string()).optional(),
     bearer_token_env: z.string().default('MEMORY_API_TOKEN'),
   }).default({ bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'MEMORY_API_TOKEN' }),
   routing: z.record(z.string(), routeSchema),
@@ -61,13 +72,14 @@ export type AppConfig = z.infer<typeof configSchema>;
 
 export async function loadConfig(file: string): Promise<AppConfig> {
   const absolute = path.resolve(file);
-  const raw = YAML.parse(await readFile(absolute, 'utf8')) as unknown;
+  const raw = YAML.parse(await readFile(absolute, 'utf8'), { maxAliasCount: 10, schema: 'core' }) as unknown;
   const parsed = configSchema.parse(raw);
   const base = path.dirname(absolute);
   return {
     ...parsed,
     vault_root: path.resolve(base, parsed.vault_root),
     audit_dir: path.resolve(base, parsed.audit_dir),
+    follow_symlinks: resolveFollowSymlinks(parsed.follow_symlinks),
     toolset: resolveToolset(parsed.toolset),
     advertise_output_schema: resolveOutputSchemaFlag(parsed.advertise_output_schema),
     health: resolveHealth(parsed.health),
@@ -108,6 +120,15 @@ export function resolveHealth(
   }
   health.interval_hours = value;
   return health;
+}
+
+/** `MEMORY_ALLOW_SYMLINKS=1` follows vault symlinks. Unset keeps the file value, which defaults to false. */
+export function resolveFollowSymlinks(fromFile?: boolean, env: string | undefined = process.env.MEMORY_ALLOW_SYMLINKS): boolean {
+  const override = env?.trim().toLowerCase();
+  if (!override) return fromFile ?? false;
+  if (override === '1' || override === 'true' || override === 'yes' || override === 'on') return true;
+  if (override === '0' || override === 'false' || override === 'no' || override === 'off') return false;
+  throw new Error(`MEMORY_ALLOW_SYMLINKS must be true or false (got ${JSON.stringify(env)})`);
 }
 
 /** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */

@@ -53,38 +53,29 @@ async function tempFile(name: string, content: string | Buffer): Promise<string>
 // Hand-built minimal ZIP: local header + central directory + EOCD.
 function buildZip(name: string, data: Buffer, method: 0 | 8): Buffer {
   const payload = method === 8 ? deflateRawSync(data) : data;
+  const nameBytes = Buffer.from(name, 'utf8');
   const local = Buffer.alloc(30);
   local.writeUInt32LE(0x04034b50, 0);
   local.writeUInt16LE(20, 4);
-  local.writeUInt16LE(0, 6);
   local.writeUInt16LE(method, 8);
-  local.writeUInt32LE(payload.length, 14);
-  local.writeUInt32LE(data.length, 18);
-  local.writeUInt16LE(name.length, 22);
-  local.writeUInt16LE(0, 24);
+  local.writeUInt32LE(payload.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(nameBytes.length, 26);
   const central = Buffer.alloc(46);
   central.writeUInt32LE(0x02014b50, 0);
   central.writeUInt16LE(20, 4);
   central.writeUInt16LE(20, 6);
-  central.writeUInt16LE(0, 8);
   central.writeUInt16LE(method, 10);
-  central.writeUInt32LE(payload.length, 16);
-  central.writeUInt32LE(data.length, 20);
-  central.writeUInt16LE(name.length, 24);
-  central.writeUInt16LE(0, 26);
-  central.writeUInt16LE(0, 28);
-  central.writeUInt32LE(0, 30);
-  central.writeUInt32LE(0, 34);
-  const eocd = Buffer.alloc(20);
+  central.writeUInt32LE(payload.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(nameBytes.length, 28);
+  const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(0, 4);
-  eocd.writeUInt16LE(0, 6);
   eocd.writeUInt16LE(1, 8);
   eocd.writeUInt16LE(1, 10);
-  eocd.writeUInt32LE(central.length + name.length, 12);
-  eocd.writeUInt32LE(30 + name.length + payload.length, 16);
-  eocd.writeUInt16LE(0, 18);
-  return Buffer.concat([local, Buffer.from(name, 'utf8'), payload, central, Buffer.from(name, 'utf8'), eocd]);
+  eocd.writeUInt32LE(central.length + nameBytes.length, 12);
+  eocd.writeUInt32LE(30 + nameBytes.length + payload.length, 16);
+  return Buffer.concat([local, nameBytes, payload, central, nameBytes, eocd]);
 }
 
 describe('ChatGPT export parser', () => {

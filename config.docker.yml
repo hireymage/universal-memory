@@ -6,6 +6,9 @@ read_only: false
 audit_dir: /state/audit
 transport: http
 http:
+  # 0.0.0.0 inside the container so the published port works. Host and Origin
+  # are still limited to localhost unless allowed_hosts is set or
+  # MEMORY_HTTP_ALLOW_ANY_HOST=1. Compose publishes 127.0.0.1 by default.
   bind: 0.0.0.0
   port: 27123
   allowed_origins: []

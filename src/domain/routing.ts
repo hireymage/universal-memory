@@ -12,7 +12,7 @@ export class StorageRouter {
   constructor(private readonly vaultRoot: string, private readonly routes: Record<string, Route>) {}
 
   route(type: string, title: string, date = new Date(), metadata: Record<string, unknown> = {}): { backend: string; absolutePath: string; relativePath: string } {
-    const route = this.routes[type] ?? this.routes.memory;
+    const route = Object.prototype.hasOwnProperty.call(this.routes, type) ? this.routes[type] : this.routes.memory;
     if (!route) throw new MemoryError('VALIDATION_ERROR', `No route configured for entity type: ${type}`);
     let relativePath = route.path
       .replaceAll('{slug}', slugify(title))
@@ -25,6 +25,7 @@ export class StorageRouter {
   }
 
   resolve(relativePath: string): string {
+    if (relativePath.includes('\0')) throw new MemoryError('PATH_ESCAPE', 'Path escapes vault root');
     if (path.isAbsolute(relativePath)) throw new MemoryError('PATH_ESCAPE', 'Absolute paths are not allowed');
     const resolved = path.resolve(this.vaultRoot, relativePath);
     const prefix = `${path.resolve(this.vaultRoot)}${path.sep}`;
@@ -39,10 +40,21 @@ function safeCollectionPath(value: unknown, key: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new MemoryError('VALIDATION_ERROR', `Missing routing metadata: ${key}`);
   const normalized = value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
   const segments = normalized.split('/');
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.includes('\0'))) {
+  if (segments.some((segment) => unsafePathSegment(segment))) {
     throw new MemoryError('PATH_ESCAPE', `Unsafe routing metadata: ${key}`);
   }
   return segments.join('/');
+}
+
+/**
+ * Reject `..`, empty segments, control characters, and lookalikes that NFKC
+ * folds into a separator or a parent segment (`．．`, fullwidth slash).
+ */
+function unsafePathSegment(segment: string): boolean {
+  if (!segment || segment === '.' || segment === '..' || /[\u0000-\u001f]/.test(segment)) return true;
+  const folded = segment.normalize('NFKC');
+  if (/[\u0000-\u001f]/.test(folded) || folded.includes('/') || folded.includes('\\')) return true;
+  return folded.split(/[/\\]/).some((part) => !part || part === '.' || part === '..');
 }
 
 function safeRouteValue(value: unknown, key: string): string {

@@ -1,5 +1,6 @@
 import type { Entity } from './types.js';
 import { MemoryError } from './errors.js';
+import { escapeRegExp, wikilinkLabel } from './path-safety.js';
 
 /**
  * Folder-collection index sync (Step 8).
@@ -29,11 +30,14 @@ export interface SyncStorage {
 }
 
 const contentsLinkRe = (target: string): RegExp =>
-  new RegExp(`^-\\s*\\[\\[[^\\]|]*${target.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}[^\\]|]*(\\|[^\\]]*)?\\]\\]\\s*$`, 'm');
+  new RegExp(`^-\\s*\\[\\[[^\\]|]*${escapeRegExp(target)}[^\\]|]*(\\|[^\\]]*)?\\]\\]\\s*$`, 'm');
 
 export function upsertContents(current: string, target: string, display: string): { content: string; changed: boolean } {
-  const link = `- [[${target}|${display}]]`;
-  if (contentsLinkRe(target).test(current)) return { content: current, changed: false };
+  const safeTarget = wikilinkLabel(target);
+  const safeDisplay = wikilinkLabel(display) || safeTarget;
+  if (!safeTarget) return { content: current, changed: false };
+  const link = `- [[${safeTarget}|${safeDisplay}]]`;
+  if (contentsLinkRe(safeTarget).test(current)) return { content: current, changed: false };
   const heading = '## Contents';
   const at = current.indexOf(heading);
   if (at < 0) return { content: `${current.replace(/\s*$/, '\n')}\n\n${heading}\n\n${link}\n`, changed: true };

@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
 import { inflateRawSync } from 'node:zlib';
 import { MemoryError } from './errors.js';
+import { MAX_ENTRY_BYTES, MAX_EXPORT_BYTES, readBoundedFile } from './bounded-read.js';
 
 /**
  * Pure ChatGPT export parser. Accepts either the official export archive
@@ -41,38 +41,74 @@ const ZIP_ENTRY_NAME = 'conversations.json';
 const toIso = (value: unknown): string =>
   typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : '';
 
-export function extractZipEntry(buffer: Buffer, wantedName: string): Buffer {
+export function extractZipEntry(buffer: Buffer, wantedName: string, maxEntryBytes = MAX_ENTRY_BYTES): Buffer {
+  if (buffer.length > MAX_EXPORT_BYTES) throw new MemoryError('VALIDATION_ERROR', `ZIP archive is too large (limit ${MAX_EXPORT_BYTES} bytes)`);
+  if (unsafeZipName(wantedName)) throw new MemoryError('VALIDATION_ERROR', 'ZIP entry name is not allowed');
   let eocd = -1;
   for (let i = buffer.length - 4; i >= 0; i--) {
-    if (buffer.readUInt32LE(i) === EOCD_SIGNATURE) { eocd = i; break; }
+    if (i + 4 <= buffer.length && buffer.readUInt32LE(i) === EOCD_SIGNATURE) { eocd = i; break; }
   }
-  if (eocd < 0) throw new MemoryError('VALIDATION_ERROR', `Not a valid ZIP archive: ${wantedName} end-of-central-directory not found`);
+  if (eocd < 0 || eocd + 22 > buffer.length) throw new MemoryError('VALIDATION_ERROR', `Not a valid ZIP archive: ${wantedName} end-of-central-directory not found`);
   const centralCount = buffer.readUInt16LE(eocd + 10);
+  if (centralCount > 10_000) throw new MemoryError('VALIDATION_ERROR', 'ZIP archive has too many entries');
   let cursor = buffer.readUInt32LE(eocd + 16);
   for (let i = 0; i < centralCount; i++) {
+    need(buffer, cursor, 46);
     if (buffer.readUInt32LE(cursor) !== CENTRAL_SIGNATURE) throw new MemoryError('VALIDATION_ERROR', 'Corrupt ZIP central directory');
     const method = buffer.readUInt16LE(cursor + 10);
-    const compressedSize = buffer.readUInt32LE(cursor + 16);
-    const nameLength = buffer.readUInt16LE(cursor + 24);
-    const extraLength = buffer.readUInt16LE(cursor + 26);
-    const commentLength = buffer.readUInt16LE(cursor + 28);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
     const localOffset = buffer.readUInt32LE(cursor + 42);
+    need(buffer, cursor + 46, nameLength);
     const name = buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength);
     if (name === wantedName) {
-      if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE)
-        throw new MemoryError('VALIDATION_ERROR', `Corrupt ZIP local header for ${wantedName}`);
-      const localNameLength = buffer.readUInt16LE(localOffset + 22);
-      const localExtraLength = buffer.readUInt16LE(localOffset + 24);
+      if (unsafeZipName(name)) throw new MemoryError('VALIDATION_ERROR', 'ZIP entry name is not allowed');
+      if (compressedSize > maxEntryBytes || uncompressedSize > maxEntryBytes) {
+        throw new MemoryError('VALIDATION_ERROR', `ZIP entry is too large (limit ${maxEntryBytes} bytes)`);
+      }
+      need(buffer, localOffset, 30);
+      if (buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) throw new MemoryError('VALIDATION_ERROR', `Corrupt ZIP local header for ${wantedName}`);
+      const localNameLength = buffer.readUInt16LE(localOffset + 26);
+      const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+      need(buffer, localOffset + 30, localNameLength);
+      const localName = buffer.toString('utf8', localOffset + 30, localOffset + 30 + localNameLength);
+      if (localName !== name) throw new MemoryError('VALIDATION_ERROR', 'ZIP local header name does not match the central directory');
       const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      need(buffer, dataStart, compressedSize);
       const raw = buffer.subarray(dataStart, dataStart + compressedSize);
-      // ZIP method 8 stores raw deflate (no zlib header); inflateRawSync handles it directly.
-      if (method === 8) return inflateRawSync(raw);
-      if (method === 0) return Buffer.from(raw);
+      if (method === 8) return inflateCapped(raw, maxEntryBytes);
+      if (method === 0) {
+        if (raw.length > maxEntryBytes) throw new MemoryError('VALIDATION_ERROR', `ZIP entry is too large (limit ${maxEntryBytes} bytes)`);
+        return Buffer.from(raw);
+      }
       throw new MemoryError('VALIDATION_ERROR', `Unsupported ZIP compression method ${method} for ${wantedName}`);
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
   throw new MemoryError('VALIDATION_ERROR', `ZIP archive does not contain ${wantedName}`);
+}
+
+function unsafeZipName(name: string): boolean {
+  if (!name || name.includes('\0') || name.includes('\\') || name.startsWith('/')) return true;
+  return name.split('/').some((part) => !part || part === '.' || part === '..');
+}
+
+function need(buffer: Buffer, offset: number, length: number): void {
+  if (offset < 0 || length < 0 || offset + length > buffer.length) throw new MemoryError('VALIDATION_ERROR', 'Corrupt ZIP archive');
+}
+
+function inflateCapped(raw: Buffer, max: number): Buffer {
+  try {
+    return inflateRawSync(raw, { maxOutputLength: max });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+      throw new MemoryError('VALIDATION_ERROR', `ZIP entry expands past ${max} bytes`);
+    }
+    throw new MemoryError('VALIDATION_ERROR', 'ZIP entry could not be inflated');
+  }
 }
 
 function extractText(content: Record<string, unknown>): string {
@@ -141,12 +177,7 @@ function parseConversation(raw: unknown): ParsedConversation | undefined {
 }
 
 export async function parseChatGptExport(filePath: string): Promise<ParsedConversation[]> {
-  let buffer: Buffer;
-  try {
-    buffer = await readFile(filePath);
-  } catch (error) {
-    throw new MemoryError('VALIDATION_ERROR', `Cannot read ChatGPT export: ${filePath}`, error instanceof Error ? error.message : String(error));
-  }
+  const buffer = await readBoundedFile(filePath);
   let root: unknown;
   try {
     root = JSON.parse((filePath.toLowerCase().endsWith('.zip') ? extractZipEntry(buffer, ZIP_ENTRY_NAME) : buffer).toString('utf8'));

@@ -11,7 +11,7 @@ Při vytvoření nebo úpravě entity (a při `reindex`) se do sidecar pošle ti
 Příklad, který umí demo: poznámka „Ranní rituál“ obsahuje větu „Comandante mele a Lelit vaří.“ Poznámka „Dárek od Evy“ obsahuje „Lelit“, ale slovo Comandante v ní není. Obyčejné hledání podřetězce Comandante dárek nenajde. Po přečtení první poznámky synapse mezi těmi slovy zesílí a `associate` dárek vrátí.
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install 'torch>=2.10.0' --index-url https://download.pytorch.org/whl/cpu
 pip install -r neural/requirements.txt
 python neural/demo_associate.py
 python -m pytest neural/tests
@@ -39,7 +39,7 @@ Stav leží v `BDH_STATE_DIR` (lokálně `./.state/neural`, v kontejneru `/state
 1. Sidecar, CPU, ve výchozím stavu jen loopback:
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install 'torch>=2.10.0' --index-url https://download.pytorch.org/whl/cpu
 pip install -r neural/requirements.txt
 export BDH_STATE_DIR=./.state/neural
 # volitelně, stejné jméno proměnné jako u HTTP serveru
@@ -47,7 +47,7 @@ export MEMORY_API_TOKEN='...dlouhý token...'
 python -m bdh_memory --bind 127.0.0.1 --port 8091
 ```
 
-Bez tokenu smí sidecar poslouchat jen na loopbacku. Na jiné adrese bez tokenu nenaběhne. Token bere v pořadí `BDH_TOKEN`, soubor `BDH_TOKEN_FILE` (nebo `MEMORY_API_TOKEN_FILE`), pak `MEMORY_API_TOKEN`.
+Bez tokenu smí sidecar poslouchat jen na loopbacku. Na jiné adrese bez tokenu nenaběhne. Token bere v pořadí `BDH_TOKEN`, soubor `BDH_TOKEN_FILE` (nebo `MEMORY_API_TOKEN_FILE`), pak `MEMORY_API_TOKEN`. Na loopbacku se kontroluje hlavička `Host` (`BDH_ALLOW_ANY_HOST=1` ji vypne). Stavové soubory se nenačtou s torch starším než 2.10 (`BDH_ALLOW_UNSAFE_TORCH=1` to dovolí). Stahování embedding modelu je vypnuté, dokud není `BDH_ALLOW_MODEL_DOWNLOAD=1`.
 
 2. V `config.yml`:
 

@@ -18,6 +18,8 @@ from typing import Any, Iterable, Protocol
 
 import torch
 
+from .safety import configure_model_download, ensure_torch_load_allowed
+
 DEFAULT_MODEL = "intfloat/multilingual-e5-base"
 MAX_PASSAGE_CHARS = 2000
 EMBED_BATCH = 32
@@ -34,6 +36,7 @@ class SentenceEncoder:
     """Wraps sentence-transformers. Imported lazily so tests run without it."""
 
     def __init__(self, model_name: str, cache_dir: str | None = None, pooling: str | None = None) -> None:
+        configure_model_download()
         from sentence_transformers import SentenceTransformer, models  # noqa: PLC0415
 
         if pooling == "cls":
@@ -151,6 +154,7 @@ class VectorIndex:
     def load(self) -> None:
         if not self.file.is_file():
             return
+        ensure_torch_load_allowed()
         payload = torch.load(self.file, map_location="cpu", weights_only=True)
         self.revisions = dict(payload.get("revisions", {}))
         self.vectors = dict(payload.get("vectors", {}))

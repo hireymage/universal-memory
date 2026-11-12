@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 import tempfile
@@ -22,6 +23,34 @@ def _get(url: str, token: str | None = None) -> tuple[int, dict]:
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         return error.code, json.loads(error.read().decode("utf-8"))
+
+
+def _raw(
+    port: int,
+    method: str,
+    path: str,
+    host: str | None = None,
+    body: bytes | None = None,
+    token: str | None = None,
+    content_length: str | None = None,
+) -> tuple[int, dict]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.putrequest(method, path, skip_host=True)
+        connection.putheader("Host", host or f"127.0.0.1:{port}")
+        if token is not None:
+            connection.putheader("Authorization", f"Bearer {token}")
+        payload = body or b""
+        if content_length is not None:
+            connection.putheader("Content-Length", content_length)
+        elif method == "POST":
+            connection.putheader("Content-Length", str(len(payload)))
+        connection.endheaders(payload if method == "POST" and content_length is None else b"")
+        response = connection.getresponse()
+        raw = response.read()
+        return response.status, json.loads(raw.decode("utf-8"))
+    finally:
+        connection.close()
 
 
 def _post(url: str, payload: dict, token: str | None = None) -> tuple[int, dict]:
@@ -126,6 +155,43 @@ class SidecarApiTest(unittest.TestCase):
         bare = MemoryApp(AssociativeBDH(n=32, k=2, seed=1), self.store, token="")
         with self.assertRaises(SystemExit):
             serve("0.0.0.0", 0, bare)
+
+
+class InputLimitsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = StateStore(Path(self.tmp.name))
+        self.app = MemoryApp(AssociativeBDH(n=32, k=2, seed=1), self.store, token="test-token")
+        self.server = serve("127.0.0.1", 0, self.app)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.server.server_address[1]
+        self.base = f"http://127.0.0.1:{self.port}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.tmp.cleanup()
+
+    def test_foreign_host_is_rejected_on_loopback(self) -> None:
+        status, body = _raw(self.port, "GET", "/health", host="evil.example")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "FORBIDDEN")
+        status, ok = _get(self.base + "/health")
+        self.assertEqual(status, 200)
+        self.assertNotIn("state_dir", ok)
+
+    def test_oversized_content_and_bad_length_are_rejected(self) -> None:
+        status, body = _post(
+            f"{self.base}/v1/upsert",
+            {"id": "x", "title": "t", "aliases": [], "content": "a" * 100_001, "revision": "r"},
+            token="test-token",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        status, bad = _raw(self.port, "POST", "/v1/upsert", body=b"{}", token="test-token", content_length="nope")
+        self.assertEqual(status, 400)
+        self.assertIn("Content-Length", bad["error"]["message"])
 
 
 class HandlerFactorySmokeTest(unittest.TestCase):

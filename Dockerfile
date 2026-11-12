@@ -30,7 +30,7 @@ WORKDIR /app
 # Experimental BDH sidecar (CPU PyTorch) lives in a venv next to the Node runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
  && python3 -m venv /opt/neural \
- && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch \
+ && /opt/neural/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple 'torch>=2.10.0' \
  && apt-get purge -y python3-venv && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 # Vector layer: sentence-transformers plus the multilingual e5-small weights, baked in at build time
 # so the running container needs no network (HF_HUB_OFFLINE=1).

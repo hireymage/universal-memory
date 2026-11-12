@@ -27,7 +27,7 @@ services:
     secrets:
       - memory_api_token
     ports:
-      - "${UMM_BIND:-0.0.0.0}:${UMM_PORT:-27123}:27123"
+      - "${UMM_BIND:-127.0.0.1}:${UMM_PORT:-27123}:27123"
     volumes:
       - type: bind
         source: ${UMM_VAULT_PATH:?set UMM_VAULT_PATH in .env}

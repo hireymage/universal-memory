@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
 import type { ParsedConversation, ParsedMessage } from './chatgpt-export.js';
+import { readBoundedFile } from './bounded-read.js';
 import { MemoryError } from './errors.js';
 
 /**
@@ -26,12 +26,7 @@ function textOf(content: unknown): string {
 const isInjected = (text: string): boolean => text.trimStart().startsWith('<system-reminder>');
 
 export async function parseClaudeCodeSession(filePath: string): Promise<ParsedConversation> {
-  let raw: string;
-  try {
-    raw = await readFile(filePath, 'utf8');
-  } catch (error) {
-    throw new MemoryError('VALIDATION_ERROR', `Cannot read Claude Code session: ${filePath}`, error instanceof Error ? error.message : String(error));
-  }
+  const raw = (await readBoundedFile(filePath)).toString('utf8');
 
   let sessionId: string | undefined;
   let title: string | undefined;
