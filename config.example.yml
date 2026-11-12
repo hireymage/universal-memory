@@ -1,9 +1,16 @@
 name: Universal Memory MCP
 vault_root: ./vault
 read_only: true
-index_path: ./.state/index.sqlite
+# There is no SQL index. The search index is rebuilt in memory from Markdown.
 audit_dir: ./.state/audit
 transport: stdio
+# MCP catalog. full (default) keeps every current tool name.
+# minimal: everyday read/write. standard: minimal plus graph, claims, and sources.
+# Override without editing this file: MEMORY_TOOLSET=minimal|standard|full
+toolset: full
+# Repeat the generic result envelope as outputSchema. On by default.
+# Set false (or MEMORY_OUTPUT_SCHEMA=false) to shrink tools/list.
+advertise_output_schema: true
 http:
   bind: 127.0.0.1
   port: 3333
@@ -15,6 +22,9 @@ neural:
   base_url: http://127.0.0.1:8091
   bearer_token_env: MEMORY_API_TOKEN
   timeout_ms: 1500
+  # Vector hits must score strictly above this. 0 drops negative cosine padding.
+  # The sidecar's own fallback, when a request omits min_score, is BDH_VECTOR_MIN_SCORE.
+  vector_min_score: 0
 routing:
   project:
     backend: markdown

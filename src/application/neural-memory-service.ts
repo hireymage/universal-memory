@@ -43,10 +43,15 @@ const HYBRID_DEGRADED = 'Neural associative memory is enabled but the sidecar di
  * with the existing substring index. The sidecar is never required.
  */
 export class NeuralMemoryService {
+  /**
+   * Vector hits with `score <= vectorMinScore` are dropped. The default floor
+   * is 0, so only strictly positive cosine similarities are returned.
+   */
   constructor(
     private readonly neural: NeuralAssociativeMemory,
     private readonly index: SearchIndex,
     private readonly lookup: (id: string) => Promise<Entity | undefined>,
+    private readonly vectorMinScore = 0,
   ) {}
 
   async associate(query: string, limit = 10, mode: AssociateMode = 'neural'): Promise<AssociateResult> {
@@ -57,7 +62,10 @@ export class NeuralMemoryService {
     const lexical = mode === 'hybrid' ? await this.index.search({ query, limit: bounded }) : [];
     const rows = new Map<string, { id: string; neural?: number; lexical?: number; entity?: Entity }>();
     if (neural.available) {
-      for (const hit of neural.results) rows.set(hit.id, { id: hit.id, neural: hit.score });
+      for (const hit of neural.results) {
+        if (!(await this.knownToIndex(hit.id))) continue;
+        rows.set(hit.id, { id: hit.id, neural: hit.score });
+      }
     }
     lexical.forEach((entity, index) => {
       const row = rows.get(entity.metadata.id) ?? { id: entity.metadata.id };
@@ -77,6 +85,8 @@ export class NeuralMemoryService {
     const degraded = !neural.available;
     const vector_results: AssociatedEntity[] = [];
     for (const hit of neural.vectorResults ?? []) {
+      if (!(hit.score > this.vectorMinScore)) continue;
+      if (!(await this.knownToIndex(hit.id))) continue;
       const entity = await this.lookup(hit.id).catch(() => undefined);
       vector_results.push(present(hit.id, hit.score, 'vector', entity));
     }
@@ -104,6 +114,11 @@ export class NeuralMemoryService {
       vector_available: false,
       vector_results: [],
     };
+  }
+
+  /** Sidecar state can outlive a vault wipe. Ids the in-memory index does not know are not results. */
+  private async knownToIndex(id: string): Promise<boolean> {
+    return (await this.index.findById(id)) !== undefined;
   }
 }
 

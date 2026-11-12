@@ -29,7 +29,7 @@ MCP stdio / MCP Streamable HTTP / REST HTTP
                     |
        Storage / Index / Audit abstractions
                     |
- MarkdownStorage  SqliteIndex  JsonlAuditLog
+ MarkdownStorage  InMemoryIndex  JsonlAuditLog
 ```
 
 Dependencies point inward. Domain code does not import Node filesystem, MCP, Express, Obsidian, SQLite, or an LLM SDK. A composition root constructs adapters and injects them into services.
@@ -138,7 +138,7 @@ Paths are resolved under `vault_root`, normalized, and rejected if they escape i
 
 Writes use a sibling temporary file, flush/close, then atomic rename. Before every update the adapter rereads the file and compares `expected_revision` against the SHA-256 revision of the current canonical bytes. A mismatch returns a typed conflict and writes nothing.
 
-SQLite is a derived index/cache outside the human content tree by default. It stores entity metadata, normalized searchable text, outbound links, backlink edges, and calendar fields. It can be deleted and fully rebuilt from Markdown. A query may trigger a targeted freshness check; `reindex` is the authority-repair operation after bulk manual edits.
+The search index is an in-process `InMemoryIndex` rebuilt from Markdown. It is not a SQL database and it is not written to `index.sqlite`. It holds entity metadata, normalized searchable text, outbound links, backlink edges, and calendar fields for the life of the process. Restarting the server drops it; `reindex` rebuilds it from the vault and is the repair step after bulk manual edits. Audit events stay in JSONL under `audit_dir`, outside the vault.
 
 Search modes:
 
@@ -214,7 +214,7 @@ The grouped tools implement the requested semantic operations while keeping the 
 | `reindex` | Rebuild derived state | optional scope | counts and diagnostics |
 | `audit_history` | Inspect events or prepare rollback | filters/action | events or inverse changeset |
 
-Each concrete JSON Schema is generated from Zod in code, uses `additionalProperties: false` where appropriate, enums, bounded limits, ISO date descriptions, and an `outputSchema`. `TOOL_CONTRACTS.md` contains the generated human-readable catalog and examples.
+Each concrete JSON Schema is generated from Zod in code, uses `additionalProperties: false` where appropriate, enums, bounded limits, and ISO `format` (`date` / `date-time`) without the long calendar regex. The shared output envelope is advertised as `outputSchema` unless `advertise_output_schema` (or `MEMORY_OUTPUT_SCHEMA`) is turned off. `TOOL_CONTRACTS.md` contains the human-readable catalog. `MEMORY_TOOLSET` selects `minimal`, `standard`, or `full` (default `full`).
 
 ### Graph tools
 
@@ -304,7 +304,7 @@ src/
   ports/           storage, index, audit interfaces
   adapters/
     markdown/      Markdown/Obsidian storage
-    sqlite/        rebuildable search index
+    index/         in-memory search index rebuilt from Markdown
     audit/         JSONL audit and snapshots
   transports/
     mcp/           tool catalog and stdio/HTTP adapters

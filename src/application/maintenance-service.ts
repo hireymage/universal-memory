@@ -105,7 +105,7 @@ export class MaintenanceService{
     if(result.changed>0)operations.push({kind:'update',entity_id:e.metadata.id,expected_revision:e.revision,patch:{content:result.content}});
   }
   const changeset=await this.prepare(`Rewrite legacy relation links to basename aliases (${operations.length} entities)`,operations,unresolved.map(u=>({code:'UNRESOLVED_RELATION',severity:'warning',message:`Relation ${u.relation_id} has no resolvable target`,entity_id:u.entity_id})) as Diagnostic[]);
-  return {changeset,entities_to_change:operations.length,unresolved,next_steps:['apply_changeset with changeset_id = changeset.id (only after reviewing the operations)','reindex only if the neural sidecar was unavailable during apply (writes are mirrored into the SQL and neural indexes; reindex repairs a lagging index)']};
+  return {changeset,entities_to_change:operations.length,unresolved,next_steps:['apply_changeset with changeset_id = changeset.id (only after reviewing the operations)','reindex only if the neural sidecar was unavailable during apply (writes are mirrored into the in-memory and neural indexes; reindex repairs a lagging index)']};
  }
  async migrateSchema(target:number,scope:Scope={kind:'vault'}):Promise<Changeset>{const operations:ChangeOperation[]=[];for await(const e of this.storage.scan()){if(!entityInScope(e,scope))continue;if(e.metadata.schema_version<target)operations.push({kind:'update',entity_id:e.metadata.id,expected_revision:e.revision,patch:{metadata:{schema_version:target}}});}return this.prepare(`Migrate schema to ${target}`,operations);}
  async history(entityId?:string,limit=100){return this.audit.list(entityId,limit);}

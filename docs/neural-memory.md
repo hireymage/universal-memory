@@ -107,7 +107,8 @@ Obraz je CPU PyTorch, jen pro čtení, uživatel 10001, stav ve svazku `umm-stat
 - Katalog a σ se při opakovaných úpravách odečítají ve floatu. Občasný `reindex` je oprava, stejně jako u lexikálního indexu.
 - Výchozí strop je 512 tokenů na entitu a v klientovi 80 000 znaků těla. Zbytek se do synapse nedostane.
 - Vrstva nic nemaže, nic neslučuje a nic nepřepisuje. Archivovaná entita v indexu zůstává, dokud ji někdo fyzicky nesmaže migračním rollbackem nebo dokud `reindex` nepostaví stav znovu z toho, co ve vaultu je.
-- `associate` smí vrátit id, které už ve vaultu není, pokud sidecar ještě neviděl smazání. Pak v odpovědi chybí titulek. `reindex` to srovná.
+- Husté vektory (třetí seznam, `BDH_VECTOR=1`) se řadí kosinem. Výchozí práh je `min_score` 0: vrátí se jen zásahy **ostře nad** prahem, takže záporný kosinus nevyplňuje `limit`. Sidecar bere `BDH_VECTOR_MIN_SCORE`, a když požadavek pošle `min_score` (server ho posílá z `neural.vector_min_score`), platí hodnota z požadavku. Jeden jediný vektor se na průměr necentruje, jinak by sám na sebe vyšel nula a práh by ho schoval.
+- Id, které aktuální paměťový index nezná (zastaralý stav sidecar, třeba po smazání vaultu dřív, než proběhne `reindex`), TypeScript adaptér z neuronových i vektorových výsledků vyhodí. `reindex` sidecar srovná s Markdownem.
 
 ## Soubory
 
