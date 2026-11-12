@@ -157,8 +157,17 @@ const RELATIONS_HEADING = '## Relations';
  * a `## Relations` (Obsidian) section holding one bullet per relation with an
  * HTML-comment marker (`<!-- rel:ID -->`) that Obsidian renders as nothing.
  */
-export function appendRelationLine(content: string, targetTitle: string, relationId: string): string {
-  const line = `- [[${targetTitle}]] <!-- rel:${relationId} -->`;
+export function relationBulletLine(target: { title: string; path: string }, relationId: string): string {
+  // Obsidian resolves a link by file name, so link the basename and show the title as alias text.
+  const parts = target.path.replace(/\.md$/, '').split('/');
+  const name = parts[parts.length - 1] ?? '';
+  // Folder notes are all called index.md; qualify them with the folder so the link is unambiguous.
+  const link = name === 'index' && parts.length > 1 ? `${parts[parts.length - 2]}/index` : name;
+  return `- [[${link}|${target.title}]] <!-- rel:${relationId} -->`;
+}
+
+export function appendRelationLine(content: string, target: { title: string; path: string }, relationId: string): string {
+  const line = relationBulletLine(target, relationId);
   const heading = content.match(/^#{2,6}\s*Relations\s*$/m);
   if (heading?.index !== undefined) {
     const at = heading.index + heading[0]!.length;
@@ -176,3 +185,30 @@ export function removeRelationLines(content: string, relationId: string): { cont
 
 /** Identity of a relation: (source entity, type, target entity). */
 export const relationIdentity = (relation: { type: string; target_id: string }): string => `${relation.type}|${relation.target_id}`;
+const RELATION_BULLET = /^- \[\[([^\]\n]*)\]\] <!-- rel:([A-Za-z0-9-]+) -->$/gm;
+
+/**
+ * Rewrites legacy relation bullets (`- [[Title]] <!-- rel:ID -->`) to the
+ * basename-alias form. Only lines carrying a relation marker are touched.
+ * `targets` maps relation id -> current target {title, path}; markers without
+ * a known target are reported in `unresolved` and left unchanged.
+ */
+export function rewriteRelationBullets(
+  content: string,
+  targets: Map<string, { title: string; path: string }>,
+): { content: string; changed: number; unresolved: string[] } {
+  let changed = 0;
+  const unresolved: string[] = [];
+  const next = content.replace(RELATION_BULLET, (line, _link: string, relationId: string) => {
+    const target = targets.get(relationId);
+    if (!target) {
+      unresolved.push(relationId);
+      return line;
+    }
+    const rewritten = relationBulletLine(target, relationId);
+    if (rewritten === line) return line;
+    changed += 1;
+    return rewritten;
+  });
+  return { content: next, changed, unresolved };
+}

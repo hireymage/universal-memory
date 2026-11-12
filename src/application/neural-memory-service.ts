@@ -3,7 +3,7 @@ import type { NeuralAssociativeMemory } from '../ports/neural.js';
 import type { Entity } from '../domain/types.js';
 
 export type AssociateMode = 'neural' | 'hybrid';
-export type AssociateSource = 'neural' | 'lexical' | 'both';
+export type AssociateSource = 'neural' | 'lexical' | 'both' | 'vector';
 
 export interface AssociatedEntity {
   id: string;
@@ -28,6 +28,9 @@ export interface AssociateResult {
   query: string;
   warning?: string;
   results: AssociatedEntity[];
+  /** Third list: semantic-similarity hits from the local embedding model. Advisory, same as `results`. */
+  vector_available: boolean;
+  vector_results: AssociatedEntity[];
 }
 
 const ADVISORY = 'Advisory only: hits are learned associations from the experimental BDH layer, not verified facts and not a substring search. Read the Markdown before asserting anything.';
@@ -72,6 +75,11 @@ export class NeuralMemoryService {
       results.push(present(item.row.id, item.score, sourceOf(item.row.neural, item.row.lexical), entity));
     }
     const degraded = !neural.available;
+    const vector_results: AssociatedEntity[] = [];
+    for (const hit of neural.vectorResults ?? []) {
+      const entity = await this.lookup(hit.id).catch(() => undefined);
+      vector_results.push(present(hit.id, hit.score, 'vector', entity));
+    }
     return {
       advisory: true,
       note: degraded ? HYBRID_DEGRADED : ADVISORY,
@@ -83,6 +91,8 @@ export class NeuralMemoryService {
       query,
       ...(neural.warning && degraded ? { warning: neural.warning } : {}),
       results,
+      vector_available: neural.vectorAvailable === true,
+      vector_results,
     };
   }
 
@@ -91,6 +101,8 @@ export class NeuralMemoryService {
       advisory: true, note, method: 'bdh-hebbian-v1', enabled, available: false, degraded, mode, query,
       ...(warning ? { warning } : {}),
       results: [],
+      vector_available: false,
+      vector_results: [],
     };
   }
 }

@@ -41,7 +41,7 @@ const ZIP_ENTRY_NAME = 'conversations.json';
 const toIso = (value: unknown): string =>
   typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : '';
 
-function extractZipEntry(buffer: Buffer, wantedName: string): Buffer {
+export function extractZipEntry(buffer: Buffer, wantedName: string): Buffer {
   let eocd = -1;
   for (let i = buffer.length - 4; i >= 0; i--) {
     if (buffer.readUInt32LE(i) === EOCD_SIGNATURE) { eocd = i; break; }
@@ -118,7 +118,10 @@ function parseConversation(raw: unknown): ParsedConversation | undefined {
   for (const node of chain) {
     const message = node.message;
     if (!message || typeof message !== 'object') continue;
-    const role = (message as Record<string, unknown>).role;
+    // Real ChatGPT exports put the role under message.author.role; keep the flat form for older fixtures.
+    const record = message as Record<string, unknown>;
+    const author = record.author as Record<string, unknown> | undefined;
+    const role = author && typeof author === 'object' ? author.role : record.role;
     if (role !== 'user' && role !== 'assistant') continue;
     const content = (message as Record<string, unknown>).content;
     if (!content || typeof content !== 'object') continue;

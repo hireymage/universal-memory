@@ -28,16 +28,18 @@ import torch
 
 from .model import DEFAULT_DECAY, DEFAULT_K, DEFAULT_NEURONS, DEFAULT_SEED, AssociativeBDH
 from .store import StateStore
+from .vectors import DEFAULT_MODEL, SentenceEncoder, VectorIndex
 
 MAX_BODY = 64 * 1024 * 1024
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
 class MemoryApp:
-    def __init__(self, model: AssociativeBDH, store: StateStore, token: str) -> None:
+    def __init__(self, model: AssociativeBDH, store: StateStore, token: str, vectors: VectorIndex | None = None) -> None:
         self.model = model
         self.store = store
         self.token = token
+        self.vectors = vectors
         self.lock = threading.Lock()
 
     def health(self) -> dict[str, Any]:
@@ -49,6 +51,11 @@ class MemoryApp:
             "fan_out": self.model.k,
             "decay": self.model.decay,
             "entities": len(self.model.entities),
+            "vectors": {
+                "enabled": self.vectors is not None,
+                "entities": len(self.vectors) if self.vectors is not None else 0,
+                "dim": self.vectors.encoder.dim if self.vectors is not None else None,
+            },
             "state_dir": str(self.store.directory),
             "bdh": {
                 "hebbian_sigma": True,
@@ -119,10 +126,21 @@ def make_handler(app: MemoryApp) -> type[BaseHTTPRequestHandler]:
 def upsert(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
     entity_id = require_id(body)
     aliases = string_list(body.get("aliases"))
+    title = str(body.get("title") or "")
+    content = str(body.get("content") or "")
+    revision = str(body.get("revision") or "")
     with app.lock:
-        result = app.model.upsert(entity_id, str(body.get("title") or ""), aliases, str(body.get("content") or ""), str(body.get("revision") or ""))
+        result = app.model.upsert(entity_id, title, aliases, content, revision)
         if not result["unchanged"]:
             app.store.save(app.model)
+        if app.vectors is not None:
+            try:
+                if app.vectors.upsert(entity_id, title, aliases, content, revision):
+                    app.vectors.save()
+                result["vector_indexed"] = True
+            except Exception as error:  # noqa: BLE001 — the BDH write must still succeed
+                result["vector_indexed"] = False
+                result["vector_error"] = str(error)[:200]
     return {"ok": True, **result}
 
 
@@ -132,6 +150,8 @@ def remove(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
         removed = app.model.remove(entity_id)
         if removed:
             app.store.save(app.model)
+        if app.vectors is not None and app.vectors.remove(entity_id):
+            app.vectors.save()
     return {"ok": True, "removed": removed}
 
 
@@ -144,10 +164,17 @@ def associate(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("limit must be an integer from 1 to 100")
     with app.lock:
         hits = app.model.associate(query, limit)
+        vector_hits: list[dict[str, Any]] = []
+        vector_available = False
+        if app.vectors is not None and body.get("vector", True):
+            vector_hits = [{"id": i, "score": s} for i, s in app.vectors.search(query, limit)]
+            vector_available = True
     return {
         "ok": True,
         "advisory": True,
         "results": [{"id": hit.id, "score": hit.score} for hit in hits],
+        "vector_available": vector_available,
+        "vector_results": vector_hits,
     }
 
 
@@ -161,7 +188,22 @@ def rebuild(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
     with app.lock:
         indexed = app.model.rebuild(entities, reset=reset)
         app.store.save(app.model)
-    return {"ok": True, "indexed": indexed}
+        if app.vectors is not None:
+            if reset:
+                app.vectors.clear()
+            app.vectors.upsert_many(
+                {
+                    "id": require_id(item),
+                    "title": str(item.get("title") or ""),
+                    "aliases": string_list(item.get("aliases")),
+                    "content": str(item.get("content") or ""),
+                    "revision": str(item.get("revision") or ""),
+                }
+                for item in entities
+                if isinstance(item, dict)
+            )
+            app.vectors.save()
+    return {"ok": True, "indexed": indexed, "vectors_indexed": len(app.vectors) if app.vectors is not None else 0}
 
 
 def require_id(body: dict[str, Any]) -> str:
@@ -224,6 +266,20 @@ def build_model_from_env() -> tuple[AssociativeBDH, StateStore]:
     return model, store
 
 
+def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
+    """Dense vector layer. Off unless BDH_VECTOR=1; the model must be present in the image or cache."""
+    if os.environ.get("BDH_VECTOR", "0") != "1":
+        return None
+    encoder = SentenceEncoder(
+        os.environ.get("BDH_EMBED_MODEL", DEFAULT_MODEL),
+        cache_dir=os.environ.get("SENTENCE_TRANSFORMERS_HOME") or None,
+        pooling=os.environ.get("BDH_POOLING") or None,
+    )
+    index = VectorIndex(encoder, state_dir)
+    index.load()
+    return index
+
+
 def serve(bind: str, port: int, app: MemoryApp) -> ThreadingHTTPServer:
     if bind not in LOOPBACK and not app.token:
         raise SystemExit("refusing a non-loopback bind without a bearer token (set BDH_TOKEN or BDH_TOKEN_FILE)")
@@ -238,9 +294,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("BDH_PORT", "8091")))
     args = parser.parse_args()
     model, store = build_model_from_env()
-    app = MemoryApp(model, store, load_token())
+    vectors = build_vectors_from_env(store.directory)
+    app = MemoryApp(model, store, load_token(), vectors)
     server = serve(args.bind, args.port, app)
-    print(f"bdh associative memory listening on http://{args.bind}:{args.port} ({len(model.entities)} entities, cpu)", flush=True)
+    vector_note = f", vectors {len(vectors)}" if vectors is not None else ", vectors off"
+    print(f"bdh associative memory listening on http://{args.bind}:{args.port} ({len(model.entities)} entities{vector_note}, cpu)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

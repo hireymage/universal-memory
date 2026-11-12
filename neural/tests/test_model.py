@@ -129,3 +129,13 @@ class HebbianRulesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiWordRankingTest(unittest.TestCase):
+    def test_note_with_every_query_word_outranks_note_with_one(self):
+        memory = AssociativeBDH(n=1024, k=4, seed=3)
+        memory.upsert("all", "Zeppelin rezonator calibration", [], "Calibration of the Zeppelin rezonator.")
+        memory.upsert("one", "Calibration notes", [], "Calibration of a kettle, nothing else.")
+        results = memory.associate("Zeppelin rezonator calibration", limit=5)
+        self.assertEqual(results[0].id, "all")
+        self.assertGreater(results[0].score, results[1].score)

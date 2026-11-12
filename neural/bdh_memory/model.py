@@ -138,20 +138,24 @@ class HebbianSynapse(nn.Module):
 def fast_sigma(codes: torch.Tensor, decay: float) -> torch.Tensor:
     """Within-context Hebbian state. Discarded after the note is consolidated.
 
-    Online rule, one token at a time, matching BDH inference rather than the
-    parallel attention kernel in the paper's toy training code:
+    Online rule, one token at a time (BDH inference):
 
         sigma += outer(Y, x)     # Y(i) * X(j)
         Y = decay * Y + x
+
+    Computed in closed form: the eligibility trace before token t is
+    Y_t = sum_{s<t} decay^(t-1-s) x_s, so sigma = Y^T X. This is the same sum as
+    the loop, but one matrix product per note instead of one outer product per
+    token, which keeps rebuilds fast for large neuron counts.
     """
     tokens, n = codes.shape
-    sigma = torch.zeros(n, n)
-    trace = torch.zeros(n)
-    for t in range(tokens):
-        activity = codes[t]
-        sigma = sigma + torch.outer(trace, activity)
-        trace = decay * trace + activity
-    return sigma
+    if tokens == 0:
+        return torch.zeros(n, n)
+    positions = torch.arange(tokens, dtype=codes.dtype)
+    gap = positions[:, None] - positions[None, :] - 1  # t - s - 1
+    weights = torch.where(gap >= 0, torch.pow(torch.tensor(decay, dtype=codes.dtype), gap.clamp(min=0)), torch.zeros(()))
+    trace = weights @ codes
+    return trace.transpose(0, 1) @ codes
 
 
 def slow_delta(codes: torch.Tensor, decay: float) -> torch.Tensor:
@@ -285,15 +289,33 @@ class AssociativeBDH(nn.Module):
         query_activity = query_activity / norm
         recalled = inhibit(self.synapse.readout(query_activity))
         scored: list[Association] = []
+        query_words = list(dict.fromkeys(tokens))
+        query_codes = [torch.tensor(_indices(word, self.n, self.k, self.seed)) for word in query_words]
         for entity_id, entity in self.entities.items():
-            # Direct: the note literally uses a query word. Synaptic: a word in
-            # the note was wired to the query by co-activation in some context.
-            # max keeps the score on the cosine scale.
-            score = max(self._best_word(query_activity, entity.indices), self._best_word(recalled, entity.indices))
+            # Coverage: for each distinct query word, how well its best-matching
+            # note word shares neurons with it; averaged over the query. A note
+            # that contains every query word outranks one that contains a single
+            # word, and long notes are not penalised for their length. Synaptic:
+            # recalled activity that the note's words excite.
+            direct = self._coverage(query_codes, entity.indices)
+            synaptic = self._best_word(recalled, entity.indices)
+            score = max(direct, synaptic)
             if score > 0.0:
                 scored.append(Association(id=entity_id, score=round(score, 6)))
         scored.sort(key=lambda item: (-item.score, item.id))
         return scored[:limit]
+
+    def _coverage(self, query_codes: list[torch.Tensor], indices: torch.Tensor) -> float:
+        """Mean over query words of the best neuron overlap with any word of the note."""
+        if not query_codes or indices.numel() == 0:
+            return 0.0
+        total = 0.0
+        for code in query_codes:
+            shared = (indices.unsqueeze(-1) == code.view(1, 1, -1)).sum(dim=(1, 2))
+            eligible = shared >= self.min_overlap
+            if bool(eligible.any()):
+                total += float(shared[eligible].max()) / self.k
+        return total / len(query_codes)
 
     def _best_word(self, pattern: torch.Tensor, indices: torch.Tensor) -> float:
         if indices.numel() == 0:
