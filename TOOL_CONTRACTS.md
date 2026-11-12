@@ -12,12 +12,14 @@ Failures use `ok:false`, a stable `error.code`, message, optional details, and M
 
 | Tool | Input | Output `data` |
 |---|---|---|
-| `remember` | `{title, content?, entity_type?, metadata?, client?}` | entity summary |
+| `remember` | `{title, content?, entity_type?, metadata?, client?}` | entity summary plus `warnings`, `normalized`, optional `classification` and `parked_in_inbox` |
+| `find` | `{query, limit?:1..20, detail?:boolean, order?:relevance\|due}` | compact hits (`id`, `title`, `type`, `path`, `snippet`, `score`, `reason`); `detail` adds metadata and score parts |
 | `recall`, `get_entity` | `{id}` | full entity with Markdown, metadata, path, revision, wikilinks |
-| `search_memory`, `search_entities` | `{query?, types?, status?, tags?, limit:1..200}` | entity summaries/full indexed entities |
+| `search_memory` | `{query?, types?, status?, tags?, limit:1..200, order?:relevance\|due, verbose?:boolean}` | `lexical` summaries with a one-sentence snippet, plus `neural` and `vector`; `verbose:true` restores long snippets |
+| `search_entities` | `{query?, types?, status?, tags?, limit:1..200, order?:relevance\|due}` | full indexed entities |
 | `retrieve_context` | `{query, subject_id?, limit:1..20, related_limit?:0..50}` | full matching entities immediately; relation expansion is opt-in through `related_limit` |
 | `retrieve_relevant_memory` | `{query,limit?:1..20}` | compact ranked evidence: ID, type, deterministic relevance, optional stored `summary_en`, source path/title and update time |
-| `update_memory`, `update_entity` | `{id, expected_revision, patch:{title?,content?,metadata?}, client?}` | updated entity |
+| `update_memory`, `update_entity` | `{id, expected_revision, patch:{title?,content?,metadata?}, client?}` | updated entity plus `warnings` and `normalized` |
 | `archive_memory` | `{id, expected_revision, client?}` | archived entity; no deletion |
 | `get_context` | `{id, limit:1..100}` | compatibility read of one selected entity and bounded relations |
 | `find_related` | `{id, limit:1..100}` | related entities and deterministic reasons |
@@ -33,6 +35,7 @@ Domain tools use a discriminating `action` enum, which gives small models one un
 | `people` | `create`, `update`, `get`, `search`, `list`, `birthdays`, `name_days`, `context` | mutations use revision; date queries require inclusive `from` and `to` ISO dates |
 | `projects` | `create`, `update`, `get`, `search`, `list`, `archive`, `add_note`, `context` | mutations use revision; project create routes to its folder |
 | `inbox` | `add`, `list`, `process`, `move` | process/move prepare a changeset and do not mutate immediately |
+| `triage_inbox` | `{limit?:1..50, decisions?:[{id, expected_revision, type}]}` | inbox items with `suggested_type`; decisions prepare a dry-run retype changeset |
 | `notes` | `create`, `update`, `search`, `link`, `related` | link uses source/target IDs and source revision |
 
 `link_entity_to_project` is represented by `link_entities` with the project as source or target. This prevents two implementations of relationship behavior. Older convenience names can be added later as aliases without changing semantics.

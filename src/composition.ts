@@ -2,10 +2,12 @@ import { StorageRouter } from './domain/routing.js';
 import { MarkdownStorage } from './adapters/markdown/markdown-storage.js';
 import { InMemoryIndex } from './adapters/index/in-memory-index.js';
 import { FileAuditSink, FileChangesetStore } from './adapters/audit/file-audit.js';
+import { UsageStore } from './adapters/audit/usage-store.js';
 import { MigrationLedger } from './adapters/migration/migration-ledger.js';
 import { BdhSidecarClient, DisabledNeuralMemory } from './adapters/neural/bdh-client.js';
 import { MirroringIndex } from './adapters/neural/mirroring-index.js';
 import { MemoryService } from './application/memory-service.js';
+import { FindService } from './application/find-service.js';
 import { PeopleService } from './application/people-service.js';
 import { ProjectService } from './application/project-service.js';
 import { MaintenanceService } from './application/maintenance-service.js';
@@ -16,7 +18,7 @@ import { NeuralMemoryService } from './application/neural-memory-service.js';
 import { HealthService } from './application/health-service.js';
 import type { NeuralAssociativeMemory } from './ports/neural.js';
 import type { SearchIndex } from './ports/index.js';
-import { resolveFollowSymlinks, resolveHealth, type AppConfig } from './config/schema.js';
+import { resolveClassification, resolveFollowSymlinks, resolveHealth, resolveRanking, type AppConfig } from './config/schema.js';
 
 export async function compose(config: AppConfig) {
   const inner = new InMemoryIndex();
@@ -33,8 +35,23 @@ export async function compose(config: AppConfig) {
   const index: SearchIndex = neural.enabled ? new MirroringIndex(inner, neural) : inner;
   const router = new StorageRouter(config.vault_root, config.routing);
   const audit = new FileAuditSink(config.audit_dir);
+  const ranking = resolveRanking(config.ranking);
+  const classification = resolveClassification(config.classification);
+  const usage = new UsageStore(config.audit_dir, ranking.track_usage);
   const storage = new MarkdownStorage(config.vault_root, router, index, config.read_only, resolveFollowSymlinks(config.follow_symlinks));
-  const memory = new MemoryService(storage, index, audit, config.routing);
+  const neuralMemory = new NeuralMemoryService(neural, inner, id => storage.get(id), config.neural?.vector_min_score ?? 0);
+  const memory = new MemoryService(storage, index, audit, config.routing, {
+    inboxThreshold: classification.inbox_confidence_threshold,
+    ranking,
+    usage,
+    vectors: async (text) => {
+      if (!neural.enabled) return [];
+      const assoc = await neuralMemory.associate(text, 5, 'neural');
+      if (!assoc.vector_available) return [];
+      return assoc.vector_results.map(hit => ({ id: hit.id, score: hit.score }));
+    },
+  });
+  const find = new FindService(memory, index, neuralMemory, usage, ranking);
   const people = new PeopleService(memory, index);
   const projects = new ProjectService(memory);
   const changesets = new FileChangesetStore(`${config.audit_dir}/changesets`);
@@ -43,9 +60,8 @@ export async function compose(config: AppConfig) {
   const graph = new GraphService(storage, index, audit, memory);
   const sources = new SourceService(memory, index);
   const migrationLedger = new MigrationLedger(`${config.audit_dir}/migration-ledger.jsonl`);
-  const neuralMemory = new NeuralMemoryService(neural, inner, id => storage.get(id), config.neural?.vector_min_score ?? 0);
   const healthConfig = resolveHealth(config.health);
   const health = new HealthService(storage, index, maintenance, audit, neural, config.vault_root, config.routing, config.audit_dir, config.read_only, healthConfig.max_changesets);
-  return { config, index, storage, audit, memory, people, projects, maintenance, agents, graph, sources, migrationLedger, neural, neuralMemory, health };
+  return { config, index, storage, audit, memory, people, projects, maintenance, agents, graph, sources, migrationLedger, neural, neuralMemory, health, usage, find };
 }
 export type Services = Awaited<ReturnType<typeof compose>>;

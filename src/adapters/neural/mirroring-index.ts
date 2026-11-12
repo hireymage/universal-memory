@@ -35,6 +35,7 @@ export class MirroringIndex implements SearchIndex {
 
   listEntries(): Promise<Array<{ id: string; path: string; revision: string }>> { return this.inner.listEntries(); }
   search(query: SearchQuery): Promise<Entity[]> { return this.inner.search(query); }
+  listAll(): Promise<Entity[]> { return this.inner.listAll(); }
   findById(id: string): Promise<{ path: string; revision: string } | undefined> { return this.inner.findById(id); }
   backlinks(titleOrAlias: string): Promise<Entity[]> { return this.inner.backlinks(titleOrAlias); }
   linksFrom(id: string): Promise<string[]> { return this.inner.linksFrom(id); }

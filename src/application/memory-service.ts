@@ -1,4 +1,5 @@
 import { ulid } from 'ulid';
+import type { UsageStore } from '../adapters/audit/usage-store.js';
 import type { AuditSink, EntityStorage, SearchIndex } from '../ports/index.js';
 import type { Entity, EntityDraft, EntityPatch, RetrievedRelation, SearchQuery } from '../domain/types.js';
 import { MemoryError } from '../domain/errors.js';
@@ -7,16 +8,55 @@ import { preCreateCheck, type PreCreateCheckResult } from '../domain/dedup-check
 import { syncCollectionIndexes, type SyncStorage } from '../domain/collection-sync.js';
 import { classifyCreate, type AdvisoryClassification } from '../domain/classification.js';
 import type { Route } from '../domain/routing.js';
+import { DEFAULT_INBOX_CONFIDENCE_THRESHOLD, parkLowConfidence } from '../domain/inbox-policy.js';
+import { compareSchedule, combinedRank, DEFAULT_RANKING, recencyScore, saturatingScore, scheduleOf, type RankingConfig } from '../domain/ranking.js';
+import { todayInPrague } from '../domain/name-days.js';
+import { normalizeDraft, normalizePatch, VECTOR_DUPLICATE_SCORE, writeWarnings, type DuplicateHint, type NormalizationChange, type WriteWarning } from '../domain/write-guard.js';
+
+export interface VectorHit {
+  id: string;
+  score: number;
+}
+
+export interface MemoryOptions {
+  inboxThreshold?: number;
+  ranking?: RankingConfig;
+  usage?: UsageStore;
+  /** Vector near-duplicates. Failures are ignored; a missing sidecar changes nothing. */
+  vectors?: (text: string) => Promise<VectorHit[]>;
+}
+
+export interface WriteMeta {
+  warnings: WriteWarning[];
+  normalized: NormalizationChange[];
+  parked_in_inbox?: true;
+}
 
 export class MemoryService {
-  constructor(private readonly storage: EntityStorage, private readonly index: SearchIndex, private readonly audit: AuditSink, private readonly routes: Record<string, Route> = {}) {}
+  private readonly inboxThreshold: number;
+  private readonly ranking: RankingConfig;
+  private readonly usage?: UsageStore;
+  private readonly vectors?: (text: string) => Promise<VectorHit[]>;
 
-  async create(draft: EntityDraft, client?: string): Promise<Entity> {
+  constructor(
+    private readonly storage: EntityStorage,
+    private readonly index: SearchIndex,
+    private readonly audit: AuditSink,
+    private readonly routes: Record<string, Route> = {},
+    options: MemoryOptions = {},
+  ) {
+    this.inboxThreshold = options.inboxThreshold ?? DEFAULT_INBOX_CONFIDENCE_THRESHOLD;
+    this.ranking = options.ranking ?? DEFAULT_RANKING;
+    this.usage = options.usage;
+    this.vectors = options.vectors;
+  }
+
+  async create(draft: EntityDraft, client?: string, details?: Record<string, unknown>): Promise<Entity> {
     // Same guardrail as update: graph-managed keys may enter only through the
     // validating, audited graph API, never through a generic entity create.
     assertPatchAllowed({ metadata: draft.metadata });
     const entity = await this.storage.create(draft);
-    await this.record('create', undefined, entity, client);
+    await this.record('create', undefined, entity, client, details);
     await syncCollectionIndexes(this.storage as unknown as SyncStorage, entity);
     return entity;
   }
@@ -35,22 +75,61 @@ export class MemoryService {
    * changes routing. Any failure inside classification degrades to the key
    * being omitted entirely.
    */
-  async createWithDedup(draft: EntityDraft, client?: string): Promise<{ entity: Entity; dedup: PreCreateCheckResult; classification?: AdvisoryClassification }> {
+  async createWithDedup(draft: EntityDraft, client?: string): Promise<{ entity: Entity; dedup: PreCreateCheckResult; classification?: AdvisoryClassification } & WriteMeta> {
+    const normalized = normalizeDraft(draft);
+    let classification: AdvisoryClassification | undefined;
+    try {
+      classification = classifyCreate(normalized.draft, this.routes) ?? undefined;
+    } catch {
+      // Advisory only: a classification failure never blocks the create and does not park the item.
+      classification = undefined;
+    }
+    const parked = classification
+      ? parkLowConfidence(normalized.draft, classification, this.inboxThreshold)
+      : { draft: normalized.draft, parked: false as const };
     let dedup: PreCreateCheckResult;
     try {
-      dedup = preCreateCheck(draft.title, draft.type, await this.dedupPool(draft.type, draft.title), { limit: 5 });
+      // Compare against the type the caller asked for, before an inbox park, so a near-duplicate note is still reported.
+      dedup = preCreateCheck(normalized.draft.title, normalized.draft.type, await this.dedupPool(normalized.draft.type, normalized.draft.title), { limit: 5 });
     } catch {
       dedup = { candidates: [], decision: 'no_match', error: 'dedup_check_failed' };
     }
-    let classification: AdvisoryClassification | undefined;
-    try {
-      classification = classifyCreate(draft, this.routes) ?? undefined;
-    } catch {
-      // Advisory only: a classification failure never blocks the create.
-      classification = undefined;
+    const duplicates = await this.duplicateHints(normalized.draft.title, dedup);
+    const warnings = writeWarnings({
+      type: parked.draft.type,
+      title: parked.draft.title,
+      content: parked.draft.content ?? '',
+      metadata: parked.draft.metadata ?? {},
+      duplicates,
+      conflicts: normalized.conflicts,
+    });
+    if (parked.parked && normalized.draft.type !== parked.draft.type) {
+      // The file is inbox, but required and date errors still follow the type the caller asked for.
+      for (const warning of writeWarnings({
+        type: normalized.draft.type,
+        title: normalized.draft.title,
+        content: normalized.draft.content ?? '',
+        metadata: normalized.draft.metadata ?? {},
+      })) {
+        if (warning.code === 'MISSING_FRONTMATTER' || warning.code === 'INVALID_DATE') warnings.push(warning);
+      }
     }
-    const entity = await this.create(draft, client);
-    return { entity, dedup, ...(classification ? { classification } : {}) };
+    const details: Record<string, unknown> = {};
+    if (normalized.changes.length) details.normalized = normalized.changes;
+    if (parked.parked) {
+      details.parked_in_inbox = true;
+      details.requested_type = draft.type;
+      details.classification_confidence = parked.classification_confidence;
+    }
+    const entity = await this.create(parked.draft, client, Object.keys(details).length ? details : undefined);
+    return {
+      entity,
+      dedup,
+      ...(classification ? { classification } : {}),
+      warnings,
+      normalized: normalized.changes,
+      ...(parked.parked ? { parked_in_inbox: true as const } : {}),
+    };
   }
   /** Candidate pool for the dedup check: same-type entities ranked against the
    * title via the existing search path (index plus storage.scan fallback). */
@@ -63,15 +142,10 @@ export class MemoryService {
     return entity;
   }
   async search(query: SearchQuery): Promise<Entity[]> {
-    const indexed = await this.index.search(query);
-    if (indexed.length) return indexed;
-    // The RAM index is an optimisation only. A cold/rebuilding/failed index
-    // must never be authoritative for a negative answer.
-    const direct: Entity[] = [];
-    for await (const entity of this.storage.scan()) if (matchesSource(entity, query)) direct.push(entity);
-    return direct
-      .sort((a, b) => sourceRank(b, query.query) - sourceRank(a, query.query) || b.metadata.updated_at.localeCompare(a.metadata.updated_at))
-      .slice(0, Math.min(query.limit ?? 20, 200));
+    const cap = Math.min(query.limit ?? 20, 200);
+    const indexed = await this.index.search({ query: query.query, types: query.types, status: query.status, tags: query.tags, limit: cap });
+    const rows = indexed.length ? indexed : await this.scanFallback(query, cap);
+    return this.rankRows(rows, query);
   }
 
   /**
@@ -122,15 +196,26 @@ export class MemoryService {
     });
   }
 
-  async update(id: string, patch: EntityPatch, expectedRevision: string, client?: string): Promise<Entity> {
-    assertPatchAllowed(patch);
+  async update(id: string, patch: EntityPatch, expectedRevision: string, client?: string): Promise<Entity & WriteMeta> {
+    const normalized = normalizePatch(patch);
+    assertPatchAllowed(normalized.patch);
     const before = await this.get(id);
-    const after = await this.storage.update(id, patch, expectedRevision);
+    const after = await this.storage.update(id, normalized.patch, expectedRevision);
+    const warnings = writeWarnings({
+      type: after.metadata.type,
+      title: after.metadata.title,
+      content: after.content,
+      metadata: after.metadata,
+      duplicates: await this.updateDuplicates(after),
+      conflicts: normalized.conflicts,
+    });
+    const details: Record<string, unknown> = { ...(rerouteDetails(before, after) ?? {}) };
+    if (normalized.changes.length) details.normalized = normalized.changes;
     // A type change re-routes the file inside storage.update. That move is
     // explicit (the caller passed expected_revision) and is recorded on the
     // audit event, not only in the before/after snapshots.
-    await this.record('update', before, after, client, rerouteDetails(before, after));
-    return after;
+    await this.record('update', before, after, client, Object.keys(details).length ? details : undefined);
+    return { ...after, warnings, normalized: normalized.changes };
   }
   async move(id: string, destination: string, expectedRevision: string, client?: string): Promise<Entity> {
     const before = await this.get(id);
@@ -180,6 +265,72 @@ export class MemoryService {
         if (entity.metadata.id !== id && !result.has(entity.metadata.id)) result.set(entity.metadata.id, { entity, reason: 'shared_tags' });
     return [...result.values()].slice(0, limit);
   }
+  /** Likely duplicates of an entity that already exists, excluding itself. A failed lookup adds no warning. */
+  private async updateDuplicates(entity: Entity): Promise<DuplicateHint[]> {
+    try {
+      const pool = (await this.dedupPool(entity.metadata.type, entity.metadata.title)).filter(candidate => candidate.metadata.id !== entity.metadata.id);
+      const dedup = preCreateCheck(entity.metadata.title, entity.metadata.type, pool, { limit: 5 });
+      return (await this.duplicateHints(entity.metadata.title, dedup)).filter(hint => hint.id !== entity.metadata.id);
+    } catch {
+      return [];
+    }
+  }
+
+  private async duplicateHints(title: string, dedup: PreCreateCheckResult): Promise<DuplicateHint[]> {
+    const hints: DuplicateHint[] = dedup.candidates.map(candidate => ({
+      id: candidate.entity.metadata.id,
+      score: candidate.score,
+      via: 'title' as const,
+    }));
+    if (!this.vectors || !title.trim()) return hints;
+    try {
+      for (const hit of await this.vectors(title)) {
+        if (hit.score >= VECTOR_DUPLICATE_SCORE) hints.push({ id: hit.id, score: hit.score, via: 'vector' });
+      }
+    } catch {
+      // Vector similarity is advisory. A sidecar failure must not block the write.
+    }
+    return hints;
+  }
+
+  private async scanFallback(query: SearchQuery, cap: number): Promise<Entity[]> {
+    // The RAM index is an optimisation only. A cold/rebuilding/failed index
+    // must never be authoritative for a negative answer.
+    const direct: Entity[] = [];
+    for await (const entity of this.storage.scan()) if (matchesSource(entity, query)) direct.push(entity);
+    return direct
+      .sort((a, b) => sourceRank(b, query.query) - sourceRank(a, query.query) || b.metadata.updated_at.localeCompare(a.metadata.updated_at))
+      .slice(0, cap);
+  }
+
+  private async rankRows(rows: Entity[], query: SearchQuery): Promise<Entity[]> {
+    if (rows.length < 2) return rows;
+    const now = new Date();
+    const today = todayInPrague(now);
+    const usage = await this.usage?.countsFor(rows.map(entity => entity.metadata.id)) ?? new Map<string, number>();
+    const scored = await Promise.all(rows.map(async (entity, index) => {
+      const links = await relationCount(this.index, entity);
+      const match = query.query?.trim()
+        ? Number((1 - (index / Math.max(rows.length, 1)) * 0.5).toFixed(4))
+        : 0;
+      const score = combinedRank({
+        match,
+        recency: recencyScore(entity.metadata.updated_at, now, this.ranking.half_life_days),
+        links: saturatingScore(links),
+        usage: saturatingScore(usage.get(entity.metadata.id) ?? 0),
+      }, this.ranking.weights);
+      return { entity, score };
+    }));
+    scored.sort((a, b) => {
+      if (query.order === 'due') {
+        const byDate = compareSchedule(scheduleOf(a.entity, today), scheduleOf(b.entity, today));
+        if (byDate) return byDate;
+      }
+      return b.score - a.score || b.entity.metadata.updated_at.localeCompare(a.entity.metadata.updated_at) || a.entity.metadata.title.localeCompare(b.entity.metadata.title, 'cs');
+    });
+    return scored.map(item => item.entity);
+  }
+
   private async record(operation: string, before: Entity | undefined, after: Entity | undefined, client?: string, details?: Record<string, unknown>): Promise<void> {
     const id = ulid();
     await this.audit.append({
@@ -203,6 +354,14 @@ function rerouteDetails(before: Entity, after: Entity): Record<string, unknown> 
     from_path: before.path,
     to_path: after.path,
   };
+}
+
+async function relationCount(index: SearchIndex, entity: Entity): Promise<number> {
+  const [outgoing, incoming] = await Promise.all([
+    index.edgesFrom(entity.metadata.id),
+    index.edgesTo(entity.metadata.id),
+  ]);
+  return entity.wikilinks.length + outgoing.length + incoming.length;
 }
 
 function sourceTokens(query?: string): string[] {

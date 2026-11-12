@@ -70,6 +70,8 @@ export interface SearchIndex {
   /** Id, path, and revision currently held by the disposable index. */
   listEntries(): Promise<Array<{ id: string; path: string; revision: string }>>;
   search(query: SearchQuery): Promise<Entity[]>;
+  /** Every indexed entity. Find uses this when a query has filters but no text. */
+  listAll(): Promise<Entity[]>;
   findById(id: string): Promise<{ path: string; revision: string } | undefined>;
   backlinks(titleOrAlias: string): Promise<Entity[]>;
   linksFrom(id: string): Promise<string[]>;

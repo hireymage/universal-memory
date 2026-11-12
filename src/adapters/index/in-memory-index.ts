@@ -65,6 +65,9 @@ export class InMemoryIndex implements SearchIndex {
     const entity = this.entities.get(id);
     return entity ? { path: entity.path, revision: entity.revision } : undefined;
   }
+  async listAll(): Promise<Entity[]> {
+    return [...this.entities.values()];
+  }
   async search(query: SearchQuery): Promise<Entity[]> {
     const normalized = normalize(query.query ?? '');
     const tokens = tokenize(normalized);

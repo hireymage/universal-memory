@@ -2,6 +2,8 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import YAML from 'yaml';
 import { z } from 'zod';
+import { DEFAULT_INBOX_CONFIDENCE_THRESHOLD } from '../domain/inbox-policy.js';
+import { DEFAULT_RANKING, type RankingConfig } from '../domain/ranking.js';
 import { resolveToolset } from '../transports/mcp/toolsets.js';
 
 const routeSchema = z.object({ backend: z.string().default('markdown'), path: z.string().min(1) });
@@ -50,6 +52,29 @@ const configSchema = z.object({
     max_changesets: z.number().int().min(0).max(100).default(5),
   }).optional(),
   /**
+   * Creates whose advisory classification scores below this threshold are
+   * stored as inbox. Default 0.5 parks only `low` (0.3). `medium` (0.6) and
+   * a confident create (1) keep the caller's type.
+   * `MEMORY_INBOX_CONFIDENCE_THRESHOLD` overrides the file.
+   */
+  classification: z.object({
+    inbox_confidence_threshold: z.number().min(0).max(1).optional(),
+  }).optional(),
+  /**
+   * Result ranking. Usage counts, when enabled, are stored under audit_dir
+   * and never in Markdown. Weights do not have to sum to 1.
+   */
+  ranking: z.object({
+    track_usage: z.boolean().optional(),
+    half_life_days: z.number().positive().max(3_650).optional(),
+    weights: z.object({
+      match: z.number().min(0).max(100).optional(),
+      recency: z.number().min(0).max(100).optional(),
+      links: z.number().min(0).max(100).optional(),
+      usage: z.number().min(0).max(100).optional(),
+    }).optional(),
+  }).optional(),
+  /**
    * Experimental BDH associative memory. Off unless `enabled` is true.
    * The sidecar is a disposable index outside the vault; Markdown stays the
    * source of truth whether or not this block is present.
@@ -83,7 +108,72 @@ export async function loadConfig(file: string): Promise<AppConfig> {
     toolset: resolveToolset(parsed.toolset),
     advertise_output_schema: resolveOutputSchemaFlag(parsed.advertise_output_schema),
     health: resolveHealth(parsed.health),
+    classification: resolveClassification(parsed.classification),
+    ranking: resolveRanking(parsed.ranking),
   };
+}
+
+export interface ClassificationConfig {
+  inbox_confidence_threshold: number;
+}
+
+/** File value, then `MEMORY_INBOX_CONFIDENCE_THRESHOLD`. Default parks only low confidence. */
+export function resolveClassification(
+  fromFile?: { inbox_confidence_threshold?: number } | null,
+  env: string | undefined = process.env.MEMORY_INBOX_CONFIDENCE_THRESHOLD,
+): ClassificationConfig {
+  let inbox_confidence_threshold = fromFile?.inbox_confidence_threshold ?? DEFAULT_INBOX_CONFIDENCE_THRESHOLD;
+  const override = envNumber('MEMORY_INBOX_CONFIDENCE_THRESHOLD', env, 0, 1);
+  if (override !== undefined) inbox_confidence_threshold = override;
+  return { inbox_confidence_threshold };
+}
+
+/** File values, then MEMORY_TRACK_USAGE and MEMORY_RANK_* overrides. */
+export function resolveRanking(
+  fromFile?: {
+    track_usage?: boolean;
+    half_life_days?: number;
+    weights?: Partial<RankingConfig['weights']>;
+  } | null,
+  env: NodeJS.ProcessEnv = process.env,
+): RankingConfig {
+  const weights = { ...DEFAULT_RANKING.weights, ...(fromFile?.weights ?? {}) };
+  const ranking: RankingConfig = {
+    track_usage: fromFile?.track_usage ?? DEFAULT_RANKING.track_usage,
+    half_life_days: fromFile?.half_life_days ?? DEFAULT_RANKING.half_life_days,
+    weights,
+  };
+  const track = envFlag('MEMORY_TRACK_USAGE', env.MEMORY_TRACK_USAGE);
+  if (track !== undefined) ranking.track_usage = track;
+  const halfLife = envNumber('MEMORY_RANK_HALF_LIFE_DAYS', env.MEMORY_RANK_HALF_LIFE_DAYS, 0.01, 3650);
+  if (halfLife !== undefined) ranking.half_life_days = halfLife;
+  const match = envNumber('MEMORY_RANK_MATCH', env.MEMORY_RANK_MATCH, 0, 100);
+  const recency = envNumber('MEMORY_RANK_RECENCY', env.MEMORY_RANK_RECENCY, 0, 100);
+  const links = envNumber('MEMORY_RANK_LINKS', env.MEMORY_RANK_LINKS, 0, 100);
+  const usage = envNumber('MEMORY_RANK_USAGE', env.MEMORY_RANK_USAGE, 0, 100);
+  if (match !== undefined) ranking.weights.match = match;
+  if (recency !== undefined) ranking.weights.recency = recency;
+  if (links !== undefined) ranking.weights.links = links;
+  if (usage !== undefined) ranking.weights.usage = usage;
+  return ranking;
+}
+
+function envNumber(name: string, raw: string | undefined, min: number, max: number): number | undefined {
+  const override = raw?.trim();
+  if (!override) return undefined;
+  const value = Number(override);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${name} must be a number from ${min} to ${max} (got ${JSON.stringify(override)})`);
+  }
+  return value;
+}
+
+function envFlag(name: string, raw: string | undefined): boolean | undefined {
+  const override = raw?.trim().toLowerCase();
+  if (!override) return undefined;
+  if (override === '1' || override === 'true' || override === 'yes' || override === 'on') return true;
+  if (override === '0' || override === 'false' || override === 'no' || override === 'off') return false;
+  throw new Error(`${name} must be true or false (got ${JSON.stringify(raw)})`);
 }
 
 export interface HealthConfig {
