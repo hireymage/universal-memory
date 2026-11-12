@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
@@ -75,29 +76,38 @@ class VectorIndex:
         self._matrix: torch.Tensor | None = None
         self._mean: torch.Tensor | None = None
         self._ids: list[str] = []
+        # The HTTP server is threaded. Search keeps a local snapshot so an
+        # upsert cannot clear `_matrix` or swap `_ids` under an in-flight query.
+        self._lock = threading.Lock()
 
     def __len__(self) -> int:
-        return len(self.vectors)
+        with self._lock:
+            return len(self.vectors)
 
     def upsert(self, entity_id: str, title: str, aliases: list[str], content: str, revision: str) -> bool:
         """Embed one entity. Returns False when the stored revision already matches."""
-        if revision and self.revisions.get(entity_id) == revision and entity_id in self.vectors:
-            return False
-        self.vectors[entity_id] = self.encoder.encode([passage_text(title, aliases, content)])[0]
-        self.revisions[entity_id] = revision
-        self._matrix = None
-        return True
+        with self._lock:
+            if revision and self.revisions.get(entity_id) == revision and entity_id in self.vectors:
+                return False
+        vector = self.encoder.encode([passage_text(title, aliases, content)])[0]
+        with self._lock:
+            self.vectors[entity_id] = vector
+            self.revisions[entity_id] = revision
+            self._invalidate()
+            return True
 
     def remove(self, entity_id: str) -> bool:
-        self.revisions.pop(entity_id, None)
-        removed = self.vectors.pop(entity_id, None) is not None
-        self._matrix = None
-        return removed
+        with self._lock:
+            self.revisions.pop(entity_id, None)
+            removed = self.vectors.pop(entity_id, None) is not None
+            self._invalidate()
+            return removed
 
     def clear(self) -> None:
-        self.vectors.clear()
-        self.revisions.clear()
-        self._matrix = None
+        with self._lock:
+            self.vectors.clear()
+            self.revisions.clear()
+            self._invalidate()
 
     def upsert_many(self, documents: Iterable[dict[str, Any]]) -> int:
         batch = [d for d in documents]
@@ -105,53 +115,75 @@ class VectorIndex:
             return 0
         texts = [passage_text(d["title"], d["aliases"], d["content"]) for d in batch]
         embedded = self.encoder.encode(texts)
-        for index, document in enumerate(batch):
-            entity_id = document["id"]
-            self.vectors[entity_id] = embedded[index]
-            self.revisions[entity_id] = document.get("revision", "")
-        self._matrix = None
-        return len(batch)
+        with self._lock:
+            for index, document in enumerate(batch):
+                entity_id = document["id"]
+                self.vectors[entity_id] = embedded[index]
+                self.revisions[entity_id] = document.get("revision", "")
+            self._invalidate()
+            return len(batch)
 
     def search(self, query: str, limit: int, min_score: float | None = None) -> list[tuple[str, float]]:
-        if not self.vectors or limit <= 0:
+        with self._lock:
+            if limit <= 0:
+                return []
+            floor = self.min_score if min_score is None else min_score
+            snapshot = self._snapshot()
+        if snapshot is None:
             return []
-        floor = self.min_score if min_score is None else min_score
-        if self._matrix is None:
-            self._ids = list(self.vectors.keys())
-            raw = torch.stack([self.vectors[i] for i in self._ids])
-            if raw.shape[0] == 1:
-                # Centring a single vector on itself yields zeros, so the only
-                # note would never clear a positive floor. Compare it raw.
-                self._mean = torch.zeros_like(raw[0])
-                self._matrix = torch.nn.functional.normalize(raw, dim=1)
-            else:
-                # Sentence embeddings sit in a narrow cone, so every note looks alike
-                # and generic short notes win. Centre on the corpus mean, then renormalise.
-                self._mean = raw.mean(dim=0)
-                self._matrix = torch.nn.functional.normalize(raw - self._mean, dim=1)
+        ids, mean, matrix = snapshot
         q = self.encoder.encode([query_text(query)])[0]
-        assert self._mean is not None and self._matrix is not None
-        scores = self._matrix @ torch.nn.functional.normalize(q - self._mean, dim=0)
-        ranked = sorted(
-            (
-                (float(scores[index]), index)
-                for index in range(int(scores.shape[0]))
-                if math.isfinite(float(scores[index])) and float(scores[index]) > floor
-            ),
-            key=lambda item: (-item[0], self._ids[item[1]]),
-        )
-        return [(self._ids[index], round(score, 6)) for score, index in ranked[:limit]]
+        scores = matrix @ torch.nn.functional.normalize(q - mean, dim=0)
+        values = scores.detach().tolist()
+        ranked = [
+            (score, index)
+            for index, score in enumerate(values)
+            if isinstance(score, float) and math.isfinite(score) and score > floor
+        ]
+        ranked.sort(key=lambda item: (-item[0], ids[item[1]]))
+        return [(ids[index], round(score, 6)) for score, index in ranked[:limit]]
 
     def save(self) -> None:
+        with self._lock:
+            payload = {"revisions": dict(self.revisions), "vectors": dict(self.vectors)}
         self.directory.mkdir(parents=True, exist_ok=True)
         temporary = self.file.with_suffix(".pt.tmp")
-        torch.save({"revisions": self.revisions, "vectors": self.vectors}, temporary)
+        torch.save(payload, temporary)
         os.replace(temporary, self.file)
 
     def load(self) -> None:
         if not self.file.is_file():
             return
         payload = torch.load(self.file, map_location="cpu", weights_only=True)
-        self.revisions = dict(payload.get("revisions", {}))
-        self.vectors = dict(payload.get("vectors", {}))
+        with self._lock:
+            self.revisions = dict(payload.get("revisions", {}))
+            self.vectors = dict(payload.get("vectors", {}))
+            self._invalidate()
+
+    def _invalidate(self) -> None:
+        """Caller holds `_lock`."""
         self._matrix = None
+        self._mean = None
+        self._ids = []
+
+    def _snapshot(self) -> tuple[list[str], torch.Tensor, torch.Tensor] | None:
+        """Caller holds `_lock`. The returned tensors stay valid after later invalidation."""
+        if not self.vectors:
+            return None
+        if self._matrix is None or self._mean is None:
+            ids = list(self.vectors.keys())
+            raw = torch.stack([self.vectors[i] for i in ids])
+            if raw.shape[0] == 1:
+                # Centring a single vector on itself yields zeros, so the only
+                # note would never clear a positive floor. Compare it raw.
+                mean = torch.zeros_like(raw[0])
+                matrix = torch.nn.functional.normalize(raw, dim=1)
+            else:
+                # Sentence embeddings sit in a narrow cone, so every note looks alike
+                # and generic short notes win. Centre on the corpus mean, then renormalise.
+                mean = raw.mean(dim=0)
+                matrix = torch.nn.functional.normalize(raw - mean, dim=1)
+            self._ids = ids
+            self._mean = mean
+            self._matrix = matrix
+        return list(self._ids), self._mean, self._matrix

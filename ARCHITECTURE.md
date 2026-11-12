@@ -218,7 +218,7 @@ The grouped tools implement the requested semantic operations while keeping the 
 | `reindex` | Rebuild derived state | optional scope | counts and diagnostics |
 | `audit_history` | Inspect events or prepare rollback | filters/action | events or inverse changeset |
 
-Each concrete JSON Schema is generated from Zod in code, uses `additionalProperties: false` where appropriate, enums, bounded limits, and ISO `format` (`date` / `date-time`) without the long calendar regex. The shared output envelope is not repeated as `outputSchema` unless `advertise_output_schema` (or `MEMORY_OUTPUT_SCHEMA`) is on. `TOOL_CONTRACTS.md` contains the human-readable catalog. `MEMORY_TOOLSET` selects `minimal`, `standard`, or `full` (default `full`).
+Each concrete JSON Schema is generated from Zod in code, uses `additionalProperties: false` where appropriate, enums, bounded limits, and ISO `format` (`date` / `date-time`) without the long calendar regex. The shared output envelope is advertised as `outputSchema` unless `advertise_output_schema` (or `MEMORY_OUTPUT_SCHEMA`) is turned off. `TOOL_CONTRACTS.md` contains the human-readable catalog. `MEMORY_TOOLSET` selects `minimal`, `standard`, or `full` (default `full`).
 
 ### Graph tools
 
