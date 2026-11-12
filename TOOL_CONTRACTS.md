@@ -37,7 +37,7 @@ Domain tools use a discriminating `action` enum, which gives small models one un
 
 `link_entity_to_project` is represented by `link_entities` with the project as source or target. This prevents two implementations of relationship behavior. Older convenience names can be added later as aliases without changing semantics.
 
-`find_name_days` returns the matching people as `data` (an array) and `from`, `to`, and `calendar` next to it, the same fields as before.
+`find_name_days` returns `data` as an object with `people`, `from`, `to`, and `calendar` (the same shape as before), and also repeats `from`, `to`, and `calendar` at the top level.
 
 ## Agent profiles
 

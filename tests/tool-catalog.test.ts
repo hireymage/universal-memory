@@ -153,7 +153,7 @@ describe('advertised tool schemas', () => {
     expect(called.isError).not.toBe(true);
     const body = called.structuredContent as {
       ok: boolean;
-      data: Array<{ metadata: { title: string } }>;
+      data: { people: Array<{ metadata: { title: string } }>; from: string; to: string; calendar: Array<{ date: string; names: string[] }> };
       from: string;
       to: string;
       calendar: Array<{ date: string; names: string[] }>;
@@ -161,7 +161,8 @@ describe('advertised tool schemas', () => {
     };
     expect(body.ok).toBe(true);
     expect(body.meta.api_version).toBe('1');
-    expect(body.data).toEqual([{ metadata: { id: 'p1', title: 'Martin' } }]);
+    expect(body.data.people).toEqual([{ metadata: { id: "p1", title: "Martin" } }]);
+    expect(body.data.from).toBe("2026-11-11");
     expect(body.from).toBe('2026-11-11');
     expect(body.to).toBe('2026-11-11');
     expect(body.calendar).toEqual([{ date: '2026-11-11', names: ['Martin'] }]);
