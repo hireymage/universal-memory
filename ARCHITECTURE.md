@@ -180,7 +180,8 @@ To prevent tool overload for smaller models, the default surface has stable doma
 |---|---|---|---|
 | `remember` | Store a durable memory with inferred type supplied by caller | `title`, `content`; optional `entity_type`, metadata, client | entity summary |
 | `recall` | Retrieve one entity by stable ID | `id` | entity including Markdown |
-| `search_memory` | Search across types | `query`; optional filters, limit | ranked summaries |
+| `find` | One query across fulltext, vectors, and neural associations, with inline filters | `query`; optional `detail`, `order` | compact ranked hits |
+| `search_memory` | Search across types | `query`; optional filters, limit, `verbose` | ranked summaries |
 | `update_memory` | Update title/body/metadata with concurrency | `id`, patch, `expected_revision` | updated entity |
 | `archive_memory` | Non-destructively archive | `id`, `expected_revision` | entity summary |
 | `retrieve_context` | Universal cross-category retrieval | query, optional explicit subject ID, limits | full matching entities and deterministic graph evidence |
@@ -197,6 +198,7 @@ To prevent tool overload for smaller models, the default surface has stable doma
 | Tool | Operations / input | Output |
 |---|---|---|
 | `inbox` | `action: add|list|process|move`, action-specific payload | items and optional changeset |
+| `triage_inbox` | list, or `decisions` that prepare a retype changeset | inbox items; changeset only when decisions are passed |
 | `notes` | `action: create|update|search|link|related` | entities/results |
 | `people` | `action: create|update|get|search|list|birthdays|name_days|context`; date-window inputs are explicit ISO dates | people/results |
 | `projects` | `action: create|update|get|list|search|archive|add_note|link|context` | projects/results |
