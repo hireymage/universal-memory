@@ -27,6 +27,18 @@ const configSchema = z.object({
   }).default({ bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'MEMORY_API_TOKEN' }),
   routing: z.record(z.string(), routeSchema),
   /**
+   * Periodic vault self-check. Off by default. Reports and dry-run changesets
+   * are written under audit_dir; the vault is not modified and changesets are
+   * not applied. `MEMORY_HEALTH_INTERVAL_HOURS` overrides `interval_hours`.
+   * The timer runs only for a long-lived HTTP `serve` process.
+   */
+  health: z.object({
+    enabled: z.boolean().default(false),
+    interval_hours: z.number().positive().max(8_760).default(24),
+    startup_delay_s: z.number().int().min(0).max(86_400).default(60),
+    max_changesets: z.number().int().min(0).max(100).default(5),
+  }).optional(),
+  /**
    * Experimental BDH associative memory. Off unless `enabled` is true.
    * The sidecar is a disposable index outside the vault; Markdown stays the
    * source of truth whether or not this block is present.
@@ -58,7 +70,44 @@ export async function loadConfig(file: string): Promise<AppConfig> {
     audit_dir: path.resolve(base, parsed.audit_dir),
     toolset: resolveToolset(parsed.toolset),
     advertise_output_schema: resolveOutputSchemaFlag(parsed.advertise_output_schema),
+    health: resolveHealth(parsed.health),
   };
+}
+
+export interface HealthConfig {
+  enabled: boolean;
+  interval_hours: number;
+  startup_delay_s: number;
+  max_changesets: number;
+}
+
+export const DEFAULT_HEALTH: HealthConfig = {
+  enabled: false,
+  interval_hours: 24,
+  startup_delay_s: 60,
+  max_changesets: 5,
+};
+
+/** File values win over the defaults. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval only. */
+export function resolveHealth(
+  fromFile?: Partial<HealthConfig> | null,
+  env: string | undefined = process.env.MEMORY_HEALTH_INTERVAL_HOURS,
+): HealthConfig {
+  const health: HealthConfig = { ...DEFAULT_HEALTH };
+  if (fromFile) {
+    if (fromFile.enabled !== undefined) health.enabled = fromFile.enabled;
+    if (fromFile.interval_hours !== undefined) health.interval_hours = fromFile.interval_hours;
+    if (fromFile.startup_delay_s !== undefined) health.startup_delay_s = fromFile.startup_delay_s;
+    if (fromFile.max_changesets !== undefined) health.max_changesets = fromFile.max_changesets;
+  }
+  const override = env?.trim();
+  if (!override) return health;
+  const value = Number(override);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`MEMORY_HEALTH_INTERVAL_HOURS must be a positive number (got ${JSON.stringify(override)})`);
+  }
+  health.interval_hours = value;
+  return health;
 }
 
 /** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */

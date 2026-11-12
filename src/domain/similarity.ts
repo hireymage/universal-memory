@@ -48,11 +48,20 @@ export interface SimilarCandidate {
   reason: string;
 }
 
-const stripAccents = (value: string): string =>
-  value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+/** Accent-stripped lowercase form ("Nováková" → "novakova"). Shared by search and classification. */
+export function stripAccents(value: string): string {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+}
 
-const compactForm = (value: string): string => stripAccents(value).replace(/[^a-z0-9]/g, '');
-const normalizedForm = (value: string): string => stripAccents(value).replace(/[^a-z0-9]+/g, ' ').trim();
+/** Compact form: accents stripped, lowercase, non-alphanumerics removed ("RTX 2070" → "rtx2070"). */
+export function compactForm(value: string): string {
+  return stripAccents(value).replace(/[^a-z0-9]/g, '');
+}
+
+/** Spaced form: accents stripped, lowercase, non-alphanumeric runs collapsed to single spaces. */
+export function normalizedForm(value: string): string {
+  return stripAccents(value).replace(/[^a-z0-9]+/g, ' ').trim();
+}
 
 export function tokenize(value: string): string[] {
   const tokens: string[] = [];

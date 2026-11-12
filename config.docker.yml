@@ -16,6 +16,13 @@ neural:
   base_url: http://127.0.0.1:8091
   bearer_token_env: MEMORY_API_TOKEN
   timeout_ms: 120000
+# Same self-check as config.example.yml. Off until an operator turns it on.
+# MEMORY_HEALTH_INTERVAL_HOURS overrides interval_hours.
+health:
+  enabled: false
+  interval_hours: 24
+  startup_delay_s: 60
+  max_changesets: 5
 routing:
   project:
     backend: markdown
@@ -131,3 +138,18 @@ routing:
   memory:
     backend: markdown
     path: "Memory/{slug}.md"
+  event:
+    backend: markdown
+    path: "14 Events/{date}-{slug}.md"
+  preference:
+    backend: markdown
+    path: "15 Preferences/{slug}.md"
+  fact:
+    backend: markdown
+    path: "16 Facts/{slug}.md"
+  topic:
+    backend: markdown
+    path: "04 Knowledge/Topics/{slug}.md"
+  conversation:
+    backend: markdown
+    path: "17 Conversations/{date}-{slug}.md"

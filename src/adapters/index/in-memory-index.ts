@@ -58,6 +58,9 @@ export class InMemoryIndex implements SearchIndex {
     this.retractPaths(id);
     this.retractEdges(id);
   }
+  async listEntries(): Promise<Array<{ id: string; path: string; revision: string }>> {
+    return [...this.entities.values()].map(entity => ({ id: entity.metadata.id, path: entity.path, revision: entity.revision }));
+  }
   async findById(id: string): Promise<{ path: string; revision: string } | undefined> {
     const entity = this.entities.get(id);
     return entity ? { path: entity.path, revision: entity.revision } : undefined;

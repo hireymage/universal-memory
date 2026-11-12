@@ -13,9 +13,10 @@ import { AgentProfileService } from './application/agent-profile-service.js';
 import { GraphService } from './application/graph-service.js';
 import { SourceService } from './application/source-service.js';
 import { NeuralMemoryService } from './application/neural-memory-service.js';
+import { HealthService } from './application/health-service.js';
 import type { NeuralAssociativeMemory } from './ports/neural.js';
 import type { SearchIndex } from './ports/index.js';
-import type { AppConfig } from './config/schema.js';
+import { resolveHealth, type AppConfig } from './config/schema.js';
 
 export async function compose(config: AppConfig) {
   const inner = new InMemoryIndex();
@@ -43,6 +44,8 @@ export async function compose(config: AppConfig) {
   const sources = new SourceService(memory, index);
   const migrationLedger = new MigrationLedger(`${config.audit_dir}/migration-ledger.jsonl`);
   const neuralMemory = new NeuralMemoryService(neural, inner, id => storage.get(id), config.neural?.vector_min_score ?? 0);
-  return { config, index, storage, audit, memory, people, projects, maintenance, agents, graph, sources, migrationLedger, neural, neuralMemory };
+  const healthConfig = resolveHealth(config.health);
+  const health = new HealthService(storage, index, maintenance, audit, neural, config.vault_root, config.routing, config.audit_dir, config.read_only, healthConfig.max_changesets);
+  return { config, index, storage, audit, memory, people, projects, maintenance, agents, graph, sources, migrationLedger, neural, neuralMemory, health };
 }
 export type Services = Awaited<ReturnType<typeof compose>>;

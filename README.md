@@ -9,6 +9,7 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 - Existing vaults start with `read_only: true`.
 - Writes use a temporary sibling file plus rename.
 - Updates require the latest `revision`; stale writes fail with `CONFLICT`.
+- Changing `metadata.type` through `update_memory` re-routes the file to that type's folder. The audit event records `rerouted`, `from_type`, `to_type`, `from_path`, and `to_path`. No other path moves a file because its folder looks wrong.
 - Delete is not exposed. Archive is a metadata update.
 - Maintenance prepares a dry-run changeset first; `apply_changeset` is separate.
 - HTTP binds to `127.0.0.1` by default. Non-loopback bind refuses to start without a bearer token.
@@ -20,9 +21,9 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 
 | Profile | What it advertises |
 |---|---|
-| `minimal` | `retrieve_context`, `search_memory`, `recall`, `remember`, `update_memory`, `archive_memory`, `find_related`, `search_people`, `find_name_days`, `resolve_entity` |
+| `minimal` | `retrieve_context`, `search_memory`, `recall`, `remember`, `update_memory`, `archive_memory`, `find_related`, `search_people`, `find_name_days`, `resolve_entity`, `health_report` |
 | `standard` | minimal, plus graph, claim, and source tools (`create_relation`, `create_claim`, `create_source`, `distill_next_chunk`, and the rest of that family) |
-| `full` | every tool, including aliases (`people`, `notes`, …), maintenance (`apply_changeset`, `reindex`, …), and `agent_profiles` |
+| `full` | every tool, including aliases (`people`, `notes`, …), maintenance (`apply_changeset`, `reindex`, `run_health_check`, …), and `agent_profiles` |
 
 `standard` can prepare a merge changeset, but `apply_changeset` is maintenance and stays on `full`. The safety model does not change with the profile: `read_only` still defaults to true, writes still require `expected_revision`, nothing is deleted, and maintenance is still dry-run then `apply_changeset`.
 
@@ -86,7 +87,7 @@ Default mode is best-effort: every edge is attempted independently and the repor
 
 ## Advisory classification on create
 
-Every title-create tool (`remember`, `create_entity`, `people` action=create, `projects` action=create, `record_project_decision`, `inbox` action=add, `notes` action=create) returns an optional additive `classification` block alongside `dedup`. It is computed locally by pure deterministic rules (no LLM, no I/O, no network): `suggested_type` when the chosen type is generic (`memory`) or strongly mismatched with the title evidence (kinship terms → `person`, `decision`/`rozhodnutí` → `decision`, `notes`/`poznámka` → `note`), `suggested_collections` (a person with family hints routed flat to `People/{slug}.md` without `metadata.member_of_collections` pinning is advised to pin `People/family`), and `routing_notes` flagging types with no configured route (silent fallback to the `memory` route). `confidence` is `high`/`medium`/`low`. Strictly advisory: it never blocks a create, never mutates the draft, and never changes routing; any failure inside classification simply omits the key. Semantic/LLM classification (the `umm_fast` INGEST_CLASS pattern: type, topic, candidate entities, suggested actions) remains an agent-side pattern, not a server feature. Details in [docs/classification.md](./docs/classification.md).
+Every title-create tool (`remember`, `create_entity`, `people` action=create, `projects` action=create, `record_project_decision`, `inbox` action=add, `notes` action=create) returns an optional additive `classification` block alongside `dedup`. It is computed locally by pure deterministic rules (no LLM, no I/O, no network). Hints are matched on an accent-stripped title with Unicode letter boundaries, so Czech words that end in a diacritic (`Rozhodnutí`, `Maminka`) match. The hint table covers task (`TODO`, `koupit`, `udělat`, `do pátku`, `- [ ]`), event (a date and a time), preference (`mám rád`, `nemám rád`, `preferuji`), idea (`nápad`), decision, person (kinship or `narozeniny`), and note. `suggested_type` is set when the chosen type is loose (`memory`, `note`, `knowledge`, `inbox`) or strongly mismatched. A type with no configured route still falls back to `memory`, and the block names the nearest known type (alias, otherwise similarity) instead of only warning. `suggested_collections` still advises pinning `People/family` for a person with kinship hints and no `metadata.member_of_collections`. `confidence` is `high`/`medium`/`low`. Strictly advisory: it never blocks a create, never mutates the draft, and never changes routing; any failure inside classification simply omits the key. Semantic/LLM classification remains an agent-side pattern. Details in [docs/classification.md](./docs/classification.md). Czech overview of types, routes, and the health check: [docs/typy-a-kontrola.md](./docs/typy-a-kontrola.md).
 
 ## Docker
 
@@ -99,10 +100,27 @@ docker compose up --build
 
 The image is read-only; `/vault` and `/state` are mounts. Change `read_only` in the mounted config only after inspection and backup. The Compose port remains loopback-published.
 
+## Entity types and routes
+
+`src/domain/entity-types.ts` is the registry: canonical type, default route, aliases, and the frontmatter keys that are required or expected. `config.example.yml` and `config.docker.yml` route every type the server actually creates, including `event`, `preference`, `fact`, `topic`, and `conversation`. A vault's `routing` block overrides the default path. Creating an unknown type still lands on the `memory` route; the classification block suggests the nearest registry type and does not rewrite the draft.
+
+## Health check
+
+`HealthService` reads `storage.inspectFiles()` once and reports type/folder mismatches, unknown or unrouted types, missing required frontmatter, invalid dates (`birth_date`, `name_day`, and the other registered date keys), tag casing and duplicates, broken wikilinks, accent-insensitive duplicate titles, orphans, alias collisions, index drift, and (when `neural.enabled`) sidecar revision drift via `GET /v1/ids`.
+
+The report is `${audit_dir}/health/latest.json` plus a dated history file. One audit event uses `operation: "health_check"` and the counts. Fixable issues become at most `health.max_changesets` dry-run changesets (about 50 operations each): a move or retype for a type/folder mismatch, a tag normalization update, or a relation-link repair. Nothing is applied. Index or sidecar drift adds `recommend_reindex`; reindex is not started.
+
+`health.enabled` defaults to false. `health.interval_hours`, `startup_delay_s`, and `max_changesets` configure the timer. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval. The timer uses `setInterval().unref()`, a single-flight lock, and a small jitter, and it starts only from `serve` when `transport` is `http` (not stdio, not one-shot commands).
+
+- REST: `POST /api/v1/health/run` and `GET /api/v1/health/latest` (same bearer auth as the other `/api/v1` routes).
+- CLI: `health`.
+- MCP: `health_report` on `minimal`, `standard`, and `full` (compact summary; `detail: true` pages findings). `run_health_check` is on `full` only. Both are allowed while `read_only`, because they write under `audit_dir` the same way `prepare_normalization` does.
+
 ## Commands
 
-- `serve`: stdio MCP or HTTP MCP + REST, selected by config.
+- `serve`: stdio MCP or HTTP MCP + REST, selected by config. The health timer starts only for HTTP when `health.enabled` is true.
 - `inspect`: read-only JSON report.
+- `health`: one health pass. Writes the report and dry-run changesets under `audit_dir`. Does not modify the vault.
 - `reindex`: rebuild the disposable RAM index from Markdown.
 
 ## Verification

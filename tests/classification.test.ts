@@ -65,7 +65,42 @@ describe('advisory classification rules (pure)', () => {
   it('reports an unknown type that silently falls back to the memory route', () => {
     const block = classifyCreate({ type: 'widget', title: 'Widget inventory' }, routes);
     expect(block?.confidence).toBe('low');
+    expect(block?.suggested_type).toBeUndefined();
     expect(block?.routing_notes?.some(note => note.includes('falls back to the "memory" route'))).toBe(true);
+  });
+
+  it('matches Czech words that end in a diacritic and suggests the new types', () => {
+    expect(classifyCreate({ type: 'memory', title: 'Rozhodnutí o migraci' }, routes)).toMatchObject({ suggested_type: 'decision', confidence: 'medium' });
+    expect(classifyCreate({ type: 'memory', title: 'Maminka' }, routes)).toMatchObject({
+      suggested_type: 'person', suggested_collections: ['People/family'], confidence: 'medium',
+    });
+    expect(classifyCreate({ type: 'person', title: 'Maminka', metadata: { family: true } }, routes)?.confidence).toBe('high');
+    expect(classifyCreate({ type: 'memory', title: 'Koupit mléko do pátku' }, routes)?.suggested_type).toBe('task');
+    expect(classifyCreate({ type: 'memory', title: 'Udělat review kódu' }, routes)?.suggested_type).toBe('task');
+    expect(classifyCreate({ type: 'memory', title: 'TODO: zavolat' }, routes)?.suggested_type).toBe('task');
+    expect(classifyCreate({ type: 'memory', title: '- [ ] koupit chleba' }, routes)?.suggested_type).toBe('task');
+    expect(classifyCreate({ type: 'memory', title: 'Schůzka 12. 11. 2026 v 14:30' }, routes)?.suggested_type).toBe('event');
+    expect(classifyCreate({ type: 'memory', title: 'Call 2026-11-12 09:00' }, routes)?.suggested_type).toBe('event');
+    expect(classifyCreate({ type: 'memory', title: 'Mám rád kávu' }, routes)?.suggested_type).toBe('preference');
+    expect(classifyCreate({ type: 'memory', title: 'Nemám rád zimu' }, routes)?.suggested_type).toBe('preference');
+    expect(classifyCreate({ type: 'memory', title: 'Preferuji tmavý režim' }, routes)?.suggested_type).toBe('preference');
+    expect(classifyCreate({ type: 'memory', title: 'Nápad na redesign' }, routes)?.suggested_type).toBe('idea');
+    expect(classifyCreate({ type: 'memory', title: 'Narozeniny Evy' }, routes)?.suggested_type).toBe('person');
+    expect(classifyCreate({ type: 'memory', title: 'Narozeniny Evy' }, routes)?.suggested_collections).toBeUndefined();
+    expect(classifyCreate({ type: 'memory', title: 'Poznámka ke Kafce' }, routes)?.suggested_type).toBe('note');
+    expect(classifyCreate({ type: 'memory', title: 'Rozhodnutím' }, routes)).toBeNull();
+    expect(classifyCreate({ type: 'note', title: 'Udělat review' }, routes)?.suggested_type).toBe('task');
+  });
+
+  it('suggests the nearest known type for an unrouted alias or near-miss', () => {
+    const alias = classifyCreate({ type: 'todo', title: 'něco později' }, routes);
+    expect(alias?.confidence).toBe('low');
+    expect(alias?.suggested_type).toBe('task');
+    expect(alias?.routing_notes?.some(note => note.includes('nearest known type is "task"') && note.includes('alias'))).toBe(true);
+    expect(alias?.routing_notes?.some(note => note.includes('falls back to the "memory" route'))).toBe(true);
+    const similar = classifyCreate({ type: 'preferences', title: 'oblíbené' }, routes);
+    expect(similar?.suggested_type).toBe('preference');
+    expect(similar?.routing_notes?.some(note => note.includes('similarity'))).toBe(true);
   });
 
   it('never mutates the draft', () => {

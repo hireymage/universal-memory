@@ -21,7 +21,7 @@ const FULL_TOOLS = [
   'agent_bootstrap', 'resolve_entity', 'merge_entities', 'create_relation', 'get_entity_relations',
   'query_relations', 'delete_relation', 'build_relations', 'create_claim', 'get_claims', 'get_entity_timeline',
   'update_claim', 'invalidate_claim', 'correct_claim', 'find_suspect_claims', 'create_source', 'get_source',
-  'distill_next_chunk', 'find_source',
+  'distill_next_chunk', 'find_source', 'health_report', 'run_health_check',
 ] as const;
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -57,7 +57,7 @@ describe('MCP toolset profiles', () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([...FULL_TOOLS].sort());
-    expect(names).toHaveLength(60);
+    expect(names).toHaveLength(62);
   });
 
   it('minimal and standard expose only their catalogs', async () => {

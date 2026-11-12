@@ -93,7 +93,18 @@ export class MarkdownStorage implements EntityStorage {
     };
     const currentPath=this.router.resolve(current.path);
     let targetPath=currentPath;
-    if(metadata.type!==current.metadata.type){targetPath=this.router.route(metadata.type,metadata.title,new Date(),metadata).absolutePath;await mkdir(path.dirname(targetPath),{recursive:true});try{await stat(targetPath);throw new MemoryError('CONFLICT',`Move target already exists: ${targetPath}`);}catch(error){if(error instanceof MemoryError)throw error;}await rename(currentPath,targetPath);}
+    // Explicit type change (update_memory / memory.update with the caller's
+    // expected_revision). The file is renamed onto the new type's route.
+    // MemoryService records from_path/to_path on the update audit event.
+    // Health checks must not call this; they only prepare a dry-run changeset.
+    if(metadata.type!==current.metadata.type){
+      targetPath=this.router.route(metadata.type,metadata.title,new Date(),metadata).absolutePath;
+      if(targetPath!==currentPath){
+        await mkdir(path.dirname(targetPath),{recursive:true});
+        try{await stat(targetPath);throw new MemoryError('CONFLICT',`Move target already exists: ${targetPath}`);}catch(error){if(error instanceof MemoryError)throw error;}
+        await rename(currentPath,targetPath);
+      }
+    }
     let entity:Entity;
     try{entity=await this.atomicWrite(targetPath,metadata,patch.content??current.content);}catch(error){if(targetPath!==currentPath)await rename(targetPath,currentPath).catch(()=>undefined);throw error;}
     await this.index.upsert(entity);
@@ -125,10 +136,14 @@ export class MarkdownStorage implements EntityStorage {
     let targetPath = currentPath;
     if (complete.type !== current.metadata.type) {
       targetPath = this.router.route(complete.type, complete.title, new Date(), complete).absolutePath;
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      try { await stat(targetPath); throw new MemoryError('CONFLICT', `Move target already exists: ${targetPath}`); }
-      catch (error) { if (error instanceof MemoryError) throw error; }
-      await rename(currentPath, targetPath);
+      // A type whose route resolves to the current path is an in-place retype.
+      // stat() would otherwise see this file and report a false conflict.
+      if (targetPath !== currentPath) {
+        await mkdir(path.dirname(targetPath), { recursive: true });
+        try { await stat(targetPath); throw new MemoryError('CONFLICT', `Move target already exists: ${targetPath}`); }
+        catch (error) { if (error instanceof MemoryError) throw error; }
+        await rename(currentPath, targetPath);
+      }
     }
     let entity: Entity;
     try { entity = await this.atomicWrite(targetPath, complete, content); }

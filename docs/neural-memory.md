@@ -86,7 +86,7 @@ curl -s 'http://127.0.0.1:3333/api/v1/associate?q=Comandante&mode=hybrid&limit=1
 
 Chybí `q`, `limit` není kladné celé číslo, nebo `mode` není `neural`/`hybrid` → `400 VALIDATION_ERROR`.
 
-Sidecar samo má `GET /health` (bez tokenu, bez textu vaultu), `POST /v1/upsert`, `/v1/remove`, `/v1/associate`, `/v1/rebuild`. POST chce bearer, pokud je token nastavený.
+Sidecar samo má `GET /health` (bez tokenu, bez textu vaultu), `GET /v1/ids` (id → revize pro vrstvu BDH a, když běží, pro vektorovou vrstvu; bearer jako ostatní `/v1`, žádný text poznámek) a `POST /v1/upsert`, `/v1/remove`, `/v1/associate`, `/v1/rebuild`. POST chce bearer, pokud je token nastavený. Kontrola zdraví tyhle revize jen porovná s Markdownem a při rozdílu doporučí `reindex`. Sama ho nespouští.
 
 ## Docker
 

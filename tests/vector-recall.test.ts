@@ -22,6 +22,7 @@ function neuralWith(response: Partial<Awaited<ReturnType<NeuralAssociativeMemory
     async associate() { return { available: true, results: [], ...response }; },
     async rebuild() { return { available: true, indexed: 0 }; },
     async health() { return { enabled: true, available: true }; },
+    async revisions() { return { available: true, bdh: {}, vector: null }; },
   };
 }
 

@@ -25,6 +25,15 @@ neural:
   # Vector hits must score strictly above this. 0 drops negative cosine padding.
   # The sidecar's own fallback, when a request omits min_score, is BDH_VECTOR_MIN_SCORE.
   vector_min_score: 0
+# Periodic self-check. Off by default. Writes a report and dry-run changesets
+# under audit_dir only. Never applies them and never edits the vault.
+# MEMORY_HEALTH_INTERVAL_HOURS overrides interval_hours. The timer runs only
+# for `serve` when transport is http (not stdio).
+health:
+  enabled: false
+  interval_hours: 24
+  startup_delay_s: 60
+  max_changesets: 5
 routing:
   project:
     backend: markdown
@@ -47,3 +56,51 @@ routing:
   source:
     backend: markdown
     path: "Sources/{provider}/{date}-{slug}.md"
+  decision:
+    backend: markdown
+    path: "10 Decisions/{slug}.md"
+  topic:
+    backend: markdown
+    path: "03 Knowledge/Topics/{slug}.md"
+  task:
+    backend: markdown
+    path: "11 Tasks/{slug}.md"
+  idea:
+    backend: markdown
+    path: "08 Ideas/{slug}.md"
+  event:
+    backend: markdown
+    path: "14 Events/{date}-{slug}.md"
+  preference:
+    backend: markdown
+    path: "15 Preferences/{slug}.md"
+  fact:
+    backend: markdown
+    path: "16 Facts/{slug}.md"
+  conversation:
+    backend: markdown
+    path: "17 Conversations/{date}-{slug}.md"
+  project_decision:
+    backend: markdown
+    path: "02 Projects/{project_slug}/decisions/{date}-{slug}.md"
+  folder_collection:
+    backend: markdown
+    path: "{collection_path}/index.md"
+  agent_identity:
+    backend: markdown
+    path: "Agents/{agent_id}/identity.en.md"
+  agent_identity_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/identity.cs.md"
+  agent_soul:
+    backend: markdown
+    path: "Agents/{agent_id}/soul.en.md"
+  agent_soul_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/soul.cs.md"
+  agent_role:
+    backend: markdown
+    path: "Agents/{agent_id}/roles/{role_id}.en.md"
+  agent_role_cs:
+    backend: markdown
+    path: "Agents/{agent_id}/roles/{role_id}.cs.md"

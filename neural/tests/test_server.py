@@ -12,6 +12,18 @@ from bdh_memory.server import MemoryApp, make_handler, serve
 from bdh_memory.store import StateStore
 
 
+def _get(url: str, token: str | None = None) -> tuple[int, dict]:
+    headers = {}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read().decode("utf-8"))
+
+
 def _post(url: str, payload: dict, token: str | None = None) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -52,6 +64,9 @@ class SidecarApiTest(unittest.TestCase):
         status, denied = _post(f"{self.base}/v1/associate", {"query": "Comandante"})
         self.assertEqual(status, 401)
         self.assertEqual(denied["error"]["code"], "AUTH_REQUIRED")
+        status, ids_denied = _get(f"{self.base}/v1/ids")
+        self.assertEqual(status, 401)
+        self.assertEqual(ids_denied["error"]["code"], "AUTH_REQUIRED")
 
     def test_upsert_associate_remove_and_rebuild_roundtrip(self) -> None:
         notes = [
@@ -86,6 +101,26 @@ class SidecarApiTest(unittest.TestCase):
         status, bad = _post(f"{self.base}/v1/associate", {"query": ""}, token="test-token")
         self.assertEqual(status, 400)
         self.assertEqual(bad["error"]["code"], "VALIDATION_ERROR")
+
+    def test_ids_lists_revisions_and_not_note_text(self) -> None:
+        status, body = _post(
+            f"{self.base}/v1/upsert",
+            {"id": "bridge", "title": "Secret title", "aliases": [], "content": "secret body", "revision": "rev-9"},
+            token="test-token",
+        )
+        self.assertEqual(status, 200, body)
+        status, denied = _get(f"{self.base}/v1/ids")
+        self.assertEqual(status, 401)
+        status, ids = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(ids["bdh"], {"bridge": "rev-9"})
+        self.assertIsNone(ids["vector"])
+        self.assertNotIn("secret", json.dumps(ids))
+        self.app.vectors = type("Vectors", (), {"revisions": {"bridge": "vec-1"}})()
+        status, with_vectors = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(with_vectors["vector"], {"bridge": "vec-1"})
+        self.assertNotIn("secret", json.dumps(with_vectors))
 
     def test_non_loopback_without_a_token_is_refused(self) -> None:
         bare = MemoryApp(AssociativeBDH(n=32, k=2, seed=1), self.store, token="")

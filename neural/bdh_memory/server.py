@@ -3,6 +3,7 @@
 Endpoints (JSON):
 
 * ``GET  /health``                 — no vault text; open so a healthcheck can call it
+* ``GET  /v1/ids``                 — id to revision for the BDH layer and, when on, the vector layer
 * ``POST /v1/upsert``              — ingest one entity
 * ``POST /v1/remove``              — drop one entity and retract its synapses
 * ``POST /v1/associate``           — ranked entity ids for a query
@@ -93,6 +94,12 @@ def make_handler(app: MemoryApp) -> type[BaseHTTPRequestHandler]:
             if path == "/health":
                 send_json(self, 200, app.health())
                 return
+            if path == "/v1/ids":
+                if not authorized(self, app.token):
+                    send_json(self, 401, {"ok": False, "error": {"code": "AUTH_REQUIRED", "message": "Valid bearer token required"}})
+                    return
+                send_json(self, 200, list_ids(app))
+                return
             send_json(self, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Unknown path"}})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -122,6 +129,14 @@ def make_handler(app: MemoryApp) -> type[BaseHTTPRequestHandler]:
                 send_json(self, 500, {"ok": False, "error": {"code": "INTERNAL_ERROR", "message": str(error)}})
 
     return Handler
+
+
+def list_ids(app: MemoryApp) -> dict[str, Any]:
+    """Revision maps only. No note text leaves the sidecar."""
+    with app.lock:
+        bdh = {entity_id: entity.revision for entity_id, entity in app.model.entities.items()}
+        vector = None if app.vectors is None else dict(app.vectors.revisions)
+    return {"ok": True, "bdh": bdh, "vector": vector}
 
 
 def upsert(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
