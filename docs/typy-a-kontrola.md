@@ -28,6 +28,16 @@ Nové routy ve `config.example.yml`, `config.docker.yml` i ve výchozím registr
 
 `distill_next_chunk` v postupu pro zápis jmenuje jen routované typy: `fact`, `decision`, `topic`, `task`, `idea`, `preference`, `event`. Nevymýšlí typ, který nemá cestu.
 
+## Vyhledání, zápis, schránka
+
+`find` bere jeden dotaz. Filtry v textu jsou bez ohledu na háčky a velikost písmen: `typ:úkol` i `type:task`, `#znacka`, `osoba:`/`person:`, `projekt:`/`project:`, `do:týden`/`due:week`, `od:`/`since:`. Výchozí zásah je krátký (id, titulek, typ, cesta, věta, skóre, důvod). `detail: true` přidá metadata.
+
+Při zápisu server vrací `warnings`. Chybějící `required` a špatné datum mají závažnost `error` jako kontrola zdraví, zápis ale neblokují. Synonyma klíčů (`deadline` → `due`, `narozeniny` → `birth_date`, `svatek` → `name_day`) se přejmenují a změna je v odpovědi i v auditu. Když se hodnota neshoduje, zůstanou oba klíče.
+
+Nízká jistota klasifikace (pod `classification.inbox_confidence_threshold`, výchozí 0.5, tedy jen `low`) uloží položku jako `inbox` s `suggested_type` a `classification_confidence`. `triage_inbox` je vypíše a připraví changeset; zapíše ho až `apply_changeset`.
+
+Pořadí výsledků skládá shodu, stáří `updated`, počet odkazů a volitelně počet čtení (`ranking.track_usage`, soubor `usage.json` v audit adresáři, ne ve vaultu). Úkoly a události jdou s `order: due` od nejbližšího termínu, po termínu mají `overdue`.
+
 ## Klasifikace při vytvoření
 
 Pořád jen rada. Pravidla běží na titulku bez diakritiky a s hranicí písmene `(?<!\p{L})…(?!\p{L})`. Dřív `\b` v JavaScriptu vidělo jen ASCII, takže `Rozhodnutí` ani jiné slovo končící háčkem nebo čárkou nespárovalo.

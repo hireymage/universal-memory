@@ -9,6 +9,7 @@ export type Toolset = (typeof TOOLSETS)[number];
 /** Everyday read/write surface. */
 export const MINIMAL_TOOLS = [
   'retrieve_context',
+  'find',
   'search_memory',
   'recall',
   'remember',
@@ -46,6 +47,7 @@ export const STANDARD_TOOLS = [
   'get_source',
   'find_source',
   'distill_next_chunk',
+  'triage_inbox',
 ] as const;
 
 const MINIMAL = new Set<string>(MINIMAL_TOOLS);

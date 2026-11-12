@@ -29,6 +29,10 @@ health:
   interval_hours: 24
   startup_delay_s: 60
   max_changesets: 5
+# classification.inbox_confidence_threshold defaults to 0.5 (low confidence → inbox).
+# MEMORY_INBOX_CONFIDENCE_THRESHOLD overrides it.
+# ranking weights default to match 1, recency 0.15, links 0.1, usage 0.05.
+# ranking.track_usage is off; MEMORY_TRACK_USAGE=1 counts reads in the audit dir.
 routing:
   project:
     backend: markdown

@@ -59,6 +59,8 @@ export interface SearchQuery {
   status?: string;
   tags?: string[];
   limit?: number;
+  /** `due` lists tasks and events upcoming first. Other types keep relevance order. */
+  order?: 'relevance' | 'due';
 }
 
 /**

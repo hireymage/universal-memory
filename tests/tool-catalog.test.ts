@@ -11,7 +11,7 @@ import type { AppConfig } from '../src/config/schema.js';
 import type { Services } from '../src/composition.js';
 
 const FULL_TOOLS = [
-  'remember', 'retrieve_context', 'retrieve_relevant_memory', 'recall', 'search_memory', 'associate',
+  'remember', 'retrieve_context', 'retrieve_relevant_memory', 'recall', 'find', 'search_memory', 'associate',
   'update_memory', 'archive_memory', 'get_context', 'find_related', 'create_entity', 'get_entity',
   'update_entity', 'search_entities', 'link_entities', 'people', 'search_people', 'list_people',
   'get_person', 'get_person_context', 'find_birthdays', 'find_name_days', 'projects', 'record_project_decision',
@@ -21,7 +21,7 @@ const FULL_TOOLS = [
   'agent_bootstrap', 'resolve_entity', 'merge_entities', 'create_relation', 'get_entity_relations',
   'query_relations', 'delete_relation', 'build_relations', 'create_claim', 'get_claims', 'get_entity_timeline',
   'update_claim', 'invalidate_claim', 'correct_claim', 'find_suspect_claims', 'create_source', 'get_source',
-  'distill_next_chunk', 'find_source', 'health_report', 'run_health_check',
+  'distill_next_chunk', 'find_source', 'health_report', 'run_health_check', 'triage_inbox',
 ] as const;
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -57,7 +57,7 @@ describe('MCP toolset profiles', () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([...FULL_TOOLS].sort());
-    expect(names).toHaveLength(62);
+    expect(names).toHaveLength(64);
   });
 
   it('minimal and standard expose only their catalogs', async () => {

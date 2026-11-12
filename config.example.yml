@@ -42,6 +42,24 @@ health:
   interval_hours: 24
   startup_delay_s: 60
   max_changesets: 5
+# Park creates whose classification score is below this. Default 0.5 parks
+# only low (0.3). medium (0.6) and a confident create (1) keep their type.
+# MEMORY_INBOX_CONFIDENCE_THRESHOLD overrides this.
+# classification:
+#   inbox_confidence_threshold: 0.5
+# Ranking weights are divided by their sum. match 1 keeps a better text hit
+# ahead of recency 0.15, links 0.1, and usage 0.05. Half-life is 30 days.
+# track_usage writes audit_dir/usage.json (recall/get counts), never Markdown.
+# MEMORY_TRACK_USAGE and MEMORY_RANK_MATCH / _RECENCY / _LINKS / _USAGE /
+# MEMORY_RANK_HALF_LIFE_DAYS override the file.
+# ranking:
+#   track_usage: false
+#   half_life_days: 30
+#   weights:
+#     match: 1
+#     recency: 0.15
+#     links: 0.1
+#     usage: 0.05
 routing:
   project:
     backend: markdown

@@ -8,8 +8,18 @@ classifyCreate(draft: EntityDraft, routes: Record<string, Route>): AdvisoryClass
 
 Pure function, no I/O, no network, no LLM. Returns `null` when nothing is advisory,
 in which case `createWithDedup` omits the key entirely. Computed inside its own
-try/catch: any failure degrades to the key being absent — the create never fails,
-the draft is never mutated, and routing is never changed.
+try/catch: any failure degrades to the key being absent — the create never fails
+and the caller's draft is never mutated.
+
+`createWithDedup` then applies one routing policy the pure function does not:
+when the numeric confidence is below `classification.inbox_confidence_threshold`
+(default 0.5, override `MEMORY_INBOX_CONFIDENCE_THRESHOLD`), the item is stored
+as `inbox` instead of the caller's type. Scores are `high` 0.9, `medium` 0.6,
+`low` 0.3, and 1 when `classifyCreate` returns null. The default therefore parks
+only `low`. A confident create stays on the requested type even if the threshold
+is raised. The parked file keeps `suggested_type`, `classification_confidence`,
+and `requested_type` in frontmatter. `triage_inbox` lists those files and can
+prepare a dry-run changeset; `apply_changeset` does the write.
 
 ## Block shape
 
@@ -55,5 +65,6 @@ type has no route at all; `medium` otherwise. The draft is never mutated.
 
 Semantic/LLM classification (the `umm_fast` INGEST_CLASS JSON pattern: type, topic,
 candidate entities, suggested actions) remains an agent-side pattern. The server
-deliberately does not interpret content, choose types, or write anything based on
-classification — it only reports deterministic hints for the calling agent to act on.
+does not interpret free text with a model. The only write that follows from this
+block is the low-confidence park into `inbox` described above; it does not invent
+a type the rules did not already suggest.
