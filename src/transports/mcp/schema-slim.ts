@@ -4,9 +4,9 @@
  *
  * Verbose mode (the previous catalog) drops only the draft `$schema` keyword
  * and the long ISO calendar regex. Compact mode, the default, also flattens
- * discriminated unions, drops defaults the server still applies, and removes
- * keywords that repeat on every field (`additionalProperties: false`,
- * `minLength: 1`, record `propertyNames`).
+ * discriminated unions and removes keywords that repeat on every field
+ * (`additionalProperties: false`, `minLength: 1`, record `propertyNames`).
+ * Defaults stay, so a client can see the limit the server applies.
  */
 
 export type SchemaAdvertiseMode = 'compact' | 'verbose';
@@ -23,7 +23,7 @@ interface StandardSchema {
 
 const ISO_FORMATS = new Set(['date', 'date-time']);
 
-export function advertiseSchema<T extends object>(schema: T, mode: SchemaAdvertiseMode): T {
+export function slimAdvertisedSchema<T extends object>(schema: T, mode: SchemaAdvertiseMode = 'compact'): T {
   const std = (schema as { '~standard'?: StandardSchema })['~standard'];
   if (!std?.jsonSchema) return schema;
   const original = std.jsonSchema;
@@ -42,12 +42,7 @@ export function advertiseSchema<T extends object>(schema: T, mode: SchemaAdverti
   return wrapped;
 }
 
-/** @deprecated Use advertiseSchema. Kept so older call sites keep the verbose strip. */
-export function slimAdvertisedSchema<T extends object>(schema: T): T {
-  return advertiseSchema(schema, 'verbose');
-}
-
-export function slimJsonSchema<T>(schema: T, mode: SchemaAdvertiseMode = 'verbose'): T {
+export function slimJsonSchema<T>(schema: T, mode: SchemaAdvertiseMode = 'compact'): T {
   return projectSchema(schema, mode);
 }
 
@@ -84,15 +79,11 @@ function compactNode(node: unknown): void {
 
 function stripCompactKeywords(obj: Record<string, unknown>): void {
   delete obj.$schema;
-  delete obj.default;
   if (typeof obj.format === 'string' && ISO_FORMATS.has(obj.format)) delete obj.pattern;
   if (obj.minLength === 1) delete obj.minLength;
   if (obj.additionalProperties === false) delete obj.additionalProperties;
   if (isEmptySchema(obj.additionalProperties)) delete obj.additionalProperties;
   if (isStringTypeOnly(obj.propertyNames)) delete obj.propertyNames;
-  if ((obj.enum !== undefined || obj.const !== undefined || typeof obj.format === 'string') && obj.type === 'string') {
-    delete obj.type;
-  }
   if (Array.isArray(obj.required) && obj.required.length === 0) delete obj.required;
 }
 

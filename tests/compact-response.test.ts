@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { compose } from '../src/composition.js';
 import { createMemoryMcpServer } from '../src/transports/mcp/server.js';
-import { fitBudget } from '../src/transports/mcp/present.js';
+import { compactValue, fitBudget } from '../src/transports/mcp/present.js';
 import type { AppConfig } from '../src/config/schema.js';
 import type { Services } from '../src/composition.js';
 
@@ -50,7 +50,7 @@ function envelope(result: { content?: Array<{ type?: string; text?: string }>; s
 describe('compact MCP responses', () => {
   it('drops frontmatter, echoed inputs, nulls, and the duplicate structured copy', async () => {
     const { services } = await setup();
-    const body = `${'A long remembered sentence about the vault. '.repeat(40)}UniqueMarker`;
+    const body = `${'A long remembered sentence about the vault. '.repeat(80)}UniqueMarker`;
     const created = await services.memory.create({
       type: 'note', title: 'Long note', content: body,
       metadata: { mood: 'calm', source_note: 'kept as a scalar field' },
@@ -68,7 +68,8 @@ describe('compact MCP responses', () => {
     expect(note.path).toBe(created.path);
     expect(note).not.toHaveProperty('metadata');
     expect(note.fields).toEqual({ mood: 'calm', source_note: 'kept as a scalar field' });
-    expect(JSON.stringify(note)).not.toContain('predicate');
+    expect(note.omitted).toContain('claims');
+    expect(JSON.stringify(note.fields)).not.toContain('predicate');
     expect(note.content_truncated).toBe(true);
     expect(String(note.content)).not.toContain('UniqueMarker');
     expect(String(note.content).endsWith('…')).toBe(true);
@@ -81,7 +82,8 @@ describe('compact MCP responses', () => {
     const searched = envelope(await client.callTool({ name: 'search_memory', arguments: { query: 'UniqueMarker', limit: 5 } }));
     expect(searched.body.data).not.toHaveProperty('query');
     const lexical = searched.body.data.lexical as Array<Record<string, unknown>>;
-    expect(lexical[0]).not.toHaveProperty('revision');
+    expect(lexical[0]?.revision).toEqual(expect.any(String));
+    expect(String(lexical[0]?.revision).length).toBeGreaterThan(8);
     expect(lexical[0]?.snippet).toEqual(expect.any(String));
     const neural = searched.body.data.neural as Record<string, unknown>;
     expect(neural).not.toHaveProperty('note');
@@ -94,6 +96,11 @@ describe('compact MCP responses', () => {
     expect(hits[0]).not.toHaveProperty('metadata');
     expect(hits[0]).not.toHaveProperty('content');
     expect(hits[0]?.snippet).toEqual(expect.any(String));
+    expect(hits[0]?.revision).toEqual(expect.any(String));
+
+    const context = envelope(await client.callTool({ name: 'retrieve_context', arguments: { query: 'UniqueMarker', limit: 5 } }));
+    const matches = context.body.data.matches as Array<{ content: string }>;
+    expect(matches.some(match => match.content.includes('UniqueMarker'))).toBe(true);
 
     const found = envelope(await client.callTool({ name: 'find', arguments: { query: 'UniqueMarker', limit: 5 } }));
     expect(found.body.data).not.toHaveProperty('query');
@@ -135,5 +142,22 @@ describe('response budget', () => {
     expect(fitted._truncated).toBe(true);
     expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(800);
     expect(fitted.notes.length).toBeLessThan(30);
+  });
+
+  it('keeps empty lists, and does not split emoji or shorten ids', () => {
+    expect(compactValue({ people: [], calendar: [] }, { mode: 'compact' })).toEqual({ people: [], calendar: [] });
+    const revision = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    const fitted = fitBudget({
+      id: revision,
+      revision,
+      path: 'Notes/poznámka.md',
+      content: `${'😀'.repeat(400)}Příliš žluťoučký kůň úpěl ďábelské ódy. TAIL`,
+    }, 180) as { id: string; revision: string; path: string; content: string };
+    expect(fitted.id).toBe(revision);
+    expect(fitted.revision).toBe(revision);
+    expect(fitted.path).toBe('Notes/poznámka.md');
+    expect(fitted.content).not.toContain('TAIL');
+    expect(JSON.stringify(fitted)).not.toMatch(/\uD800(?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])\uDC00/);
+    expect(Array.from(fitted.content).at(-1)).toBe('…');
   });
 });

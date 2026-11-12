@@ -5,14 +5,22 @@ import { oneSentence } from '../../domain/snippet.js';
 /** Approximate ceiling for one compact tool result (JSON chars, o200k is ~4 chars/token). */
 export const RESPONSE_CHAR_BUDGET = 8_000;
 const COMPACT_CONTENT_CHARS = 480;
-const DETAIL_CONTENT_CHARS = 2_400;
+
+/** Identifiers a later call needs. The budget may clip prose, never these. */
+const PROTECTED_KEYS = new Set([
+  'id', 'revision', 'path', 'entity_id', 'target_id', 'source_id', 'claim_id', 'relation_id',
+  'changeset_id', 'hint_id', 'role_id', 'agent_id', 'expected_revision', 'expected_target_revision',
+  'memory_id', 'corrected_by', 'corrects',
+]);
 
 const CORE_META = new Set(['id', 'type', 'title', 'created_at', 'updated_at', 'aliases', 'tags', 'status', 'schema_version']);
 
 export interface PresentOptions {
   mode: ResponseMode;
-  /** `detail: true` on the tool input keeps frontmatter and a longer body. */
+  /** `detail: true` keeps frontmatter and the full Markdown body. */
   detail?: boolean;
+  /** Skip compaction. Used by `retrieve_context`, whose contract is the full entity. */
+  raw?: boolean;
   vaultRoot?: string;
   /** When true, the same envelope is also returned as structuredContent. */
   duplicate?: boolean;
@@ -41,7 +49,9 @@ export function presentFailure(error: { code: string; message: string; details?:
 
 function packageEnvelope(ok: boolean, dataOrError: unknown, options: PresentOptions): ToolPayload {
   const duplicate = options.duplicate === true || options.mode === 'full';
-  const body = options.mode === 'full' ? dataOrError : fitBudget(compactValue(dataOrError, options), options.budgetChars ?? RESPONSE_CHAR_BUDGET);
+  const body = options.mode === 'full' || options.raw
+    ? dataOrError
+    : fitBudget(compactValue(dataOrError, options), options.budgetChars ?? RESPONSE_CHAR_BUDGET);
   const envelope: Record<string, unknown> = ok
     ? { ok: true, data: body }
     : { ok: false, error: body };
@@ -53,15 +63,15 @@ function packageEnvelope(ok: boolean, dataOrError: unknown, options: PresentOpti
   return { content: [{ type: 'text', text }], structuredContent: envelope };
 }
 
-export function compactValue(value: unknown, options: PresentOptions): unknown {
+export function compactValue(value: unknown, options: PresentOptions, depth = 0): unknown {
   if (value == null) return undefined;
   if (typeof value === 'string') return value === '' ? undefined : value;
   if (typeof value !== 'object') return value;
   if (Array.isArray(value)) {
-    if (!options.detail && value.length > 0 && value.every(item => !!item && typeof item === 'object' && !Array.isArray(item) && isEntity(item as Record<string, unknown>))) {
+    if (depth === 0 && !options.detail && value.length > 0 && value.every(item => !!item && typeof item === 'object' && !Array.isArray(item) && isEntity(item as Record<string, unknown>))) {
       return value.map(item => entityIndex(item as Record<string, unknown>, options));
     }
-    return value.map(item => compactValue(item, options)).filter(item => item !== undefined);
+    return value.map(item => compactValue(item, options, depth + 1)).filter(item => item !== undefined);
   }
   const record = value as Record<string, unknown>;
   if (isEntity(record)) return compactEntity(record, options);
@@ -71,9 +81,8 @@ export function compactValue(value: unknown, options: PresentOptions): unknown {
   if (isLexicalHit(record)) return compactLexical(record, options);
   const out: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(record)) {
-    const next = compactValue(child, options);
+    const next = compactValue(child, options, depth + 1);
     if (next === undefined) continue;
-    if (Array.isArray(next) && next.length === 0) continue;
     if (isEmptyObject(next)) continue;
     out[key] = next;
   }
@@ -94,7 +103,7 @@ function compactEntity(value: Record<string, unknown>, options: PresentOptions):
   const meta = value.metadata as Record<string, unknown>;
   const { metadata: _metadata, content, path: entityPath, revision, wikilinks, ...rest } = value;
   const body = String(content);
-  const clipped = clip(body, options.detail ? DETAIL_CONTENT_CHARS : COMPACT_CONTENT_CHARS);
+  const clipped = options.detail ? { text: body, truncated: false } : clip(body, COMPACT_CONTENT_CHARS);
   const header: Record<string, unknown> = {
     id: meta.id,
     type: meta.type,
@@ -106,18 +115,19 @@ function compactEntity(value: Record<string, unknown>, options: PresentOptions):
   };
   if (Array.isArray(meta.aliases) && meta.aliases.length) header.aliases = meta.aliases;
   if (Array.isArray(meta.tags) && meta.tags.length) header.tags = meta.tags;
-  if (options.detail) header.metadata = compactValue(meta, options);
+  if (options.detail) header.metadata = compactValue(meta, options, 1);
   else {
-    const fields = scalarFields(meta);
+    const { fields, omitted } = scalarFields(meta);
     if (Object.keys(fields).length) header.fields = fields;
+    if (omitted.length) header.omitted = omitted;
   }
   if (clipped.text) header.content = clipped.text;
   if (clipped.truncated) {
     header.content_truncated = true;
-    header.content_chars = body.length;
+    header.content_chars = Array.from(body).length;
   }
   if (Array.isArray(wikilinks) && wikilinks.length) header.wikilinks = wikilinks;
-  const extras = compactValue(rest, options);
+  const extras = compactValue(rest, options, 1);
   if (extras && typeof extras === 'object' && !Array.isArray(extras)) Object.assign(header, extras);
   return header;
 }
@@ -130,20 +140,23 @@ function entityIndex(value: Record<string, unknown>, options: PresentOptions): R
     type: meta.type,
     title: meta.title,
     path: displayPath(String(value.path), options.vaultRoot),
+    revision: value.revision,
     snippet: oneSentence(String(value.content), undefined, 140),
   };
   if (Array.isArray(meta.tags) && meta.tags.length) out.tags = meta.tags;
   return out;
 }
 
-function scalarFields(meta: Record<string, unknown>): Record<string, string | number | boolean> {
+function scalarFields(meta: Record<string, unknown>): { fields: Record<string, string | number | boolean>; omitted: string[] } {
   const fields: Record<string, string | number | boolean> = {};
+  const omitted: string[] = [];
   for (const [key, val] of Object.entries(meta)) {
     if (CORE_META.has(key) || val == null || val === '') continue;
     if (typeof val === 'number' || typeof val === 'boolean') fields[key] = val;
-    else if (typeof val === 'string') fields[key] = val.length > 160 ? `${val.slice(0, 159)}…` : val;
+    else if (typeof val === 'string') fields[key] = clip(val, 160).text;
+    else omitted.push(key);
   }
-  return fields;
+  return { fields, omitted };
 }
 
 function isSimilarCandidate(value: Record<string, unknown>): boolean {
@@ -232,10 +245,10 @@ function compactLexical(value: Record<string, unknown>, options: PresentOptions)
     type: value.type,
     title: value.title,
     path: displayPath(String(value.path), options.vaultRoot),
+    revision: value.revision,
     snippet: value.snippet,
   };
   if (options.detail) {
-    out.revision = value.revision;
     if (value.status) out.status = value.status;
     if (value.updated_at) out.updated_at = value.updated_at;
   }
@@ -253,8 +266,9 @@ export function displayPath(filePath: string, vaultRoot?: string): string {
 }
 
 function clip(text: string, max: number): { text: string; truncated: boolean } {
-  if (text.length <= max) return { text, truncated: false };
-  return { text: `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`, truncated: true };
+  const chars = Array.from(text);
+  if (chars.length <= max) return { text, truncated: false };
+  return { text: `${chars.slice(0, Math.max(0, max - 1)).join('').trimEnd()}…`, truncated: true };
 }
 
 function isEmptyObject(value: unknown): boolean {
@@ -286,11 +300,13 @@ function markTruncated(value: unknown): unknown {
 }
 
 function clipStrings(value: unknown, max: number): unknown {
-  if (typeof value === 'string') return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  if (typeof value === 'string') return clip(value, max).text;
   if (Array.isArray(value)) return value.map(item => clipStrings(item, max));
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) out[key] = clipStrings(child, max);
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = typeof child === 'string' && PROTECTED_KEYS.has(key) ? child : clipStrings(child, max);
+    }
     return out;
   }
   return value;

@@ -1,13 +1,13 @@
 /**
- * MCP tool catalogs. `standard` is the default: everyday read/write plus the
- * graph, claim, and source tools. `full` keeps every historical name.
- * `minimal` and `standard` only hide tools; they do not change validation,
- * revisions, or the dry-run changeset model.
+ * MCP tool catalogs. `full` is the default so an existing client keeps every
+ * tool name. `minimal` and `standard` only hide tools; they do not change
+ * validation, revisions, or the dry-run changeset model. `standard` is the
+ * smaller catalog for everyday read, write, and graph use.
  *
- * `lazy` discovery (the default) lists `standard` tools when the catalog is
- * `full`, plus `tool_groups`, which can enable the remaining groups for a
- * long-lived session. `eager` lists every tool in the selected catalog up front.
- * Stateless HTTP does not keep an enable across requests.
+ * `eager` discovery (the default) lists every tool in the selected catalog.
+ * `lazy` lists `standard` tools when the catalog is `full`, plus `tool_groups`,
+ * which can enable the remaining groups for a long-lived session. Stateless
+ * HTTP does not keep an enable across requests.
  */
 export const TOOLSETS = ['minimal', 'standard', 'full'] as const;
 export type Toolset = (typeof TOOLSETS)[number];
@@ -90,7 +90,7 @@ export const TOOL_GROUP_SUMMARY: Record<keyof typeof TOOL_GROUPS, string> = {
 };
 
 export function assertToolset(value: string | undefined): Toolset {
-  const toolset = value && value.length > 0 ? value : 'standard';
+  const toolset = value && value.length > 0 ? value : 'full';
   if (toolset !== 'minimal' && toolset !== 'standard' && toolset !== 'full') {
     throw new Error(`toolset must be minimal, standard, or full (got ${JSON.stringify(toolset)})`);
   }
@@ -98,14 +98,14 @@ export function assertToolset(value: string | undefined): Toolset {
 }
 
 export function assertDiscovery(value: string | undefined): ToolDiscovery {
-  const discovery = value && value.length > 0 ? value : 'lazy';
+  const discovery = value && value.length > 0 ? value : 'eager';
   if (discovery !== 'lazy' && discovery !== 'eager') {
     throw new Error(`tool_discovery must be lazy or eager (got ${JSON.stringify(discovery)})`);
   }
   return discovery;
 }
 
-/** `MEMORY_TOOL_DISCOVERY` overrides the file. Blank is treated as unset. Default `lazy`. */
+/** `MEMORY_TOOL_DISCOVERY` overrides the file. Blank is treated as unset. Default `eager`. */
 export function resolveDiscovery(fromFile: string | undefined, env: string | undefined = process.env.MEMORY_TOOL_DISCOVERY): ToolDiscovery {
   const override = env?.trim();
   try {
@@ -124,7 +124,7 @@ export function toolListed(name: string, toolset: Toolset, discovery: ToolDiscov
   return toolVisible(name, 'standard');
 }
 
-/** `MEMORY_TOOLSET` overrides the file. Blank is treated as unset. Default `standard`. */
+/** `MEMORY_TOOLSET` overrides the file. Blank is treated as unset. Default `full`. */
 export function resolveToolset(fromFile: string | undefined, env: string | undefined = process.env.MEMORY_TOOLSET): Toolset {
   const override = env?.trim();
   try {

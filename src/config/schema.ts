@@ -18,12 +18,12 @@ const configSchema = z.object({
    */
   follow_symlinks: z.boolean().optional(),
   audit_dir: z.string().default('./.state/audit'),
-  /** MCP catalog. Default `standard`. `full` keeps every historical tool name. `MEMORY_TOOLSET` overrides this. */
+  /** MCP catalog. Default `full` keeps every tool name. `MEMORY_TOOLSET` overrides this. */
   toolset: z.enum(['minimal', 'standard', 'full']).optional(),
   /**
-   * `lazy` (default) lists the standard tools when toolset is `full`, and
-   * `tool_groups` can enable the rest for a long-lived session. `eager` lists
-   * every tool in the toolset. `MEMORY_TOOL_DISCOVERY` overrides this.
+   * `eager` (default) lists every tool in the toolset. `lazy` lists the standard
+   * tools when toolset is `full`, and `tool_groups` can enable the rest for a
+   * long-lived session. `MEMORY_TOOL_DISCOVERY` overrides this.
    */
   tool_discovery: z.enum(['lazy', 'eager']).optional(),
   /**
@@ -32,8 +32,8 @@ const configSchema = z.object({
    */
   verbose_schema: z.boolean().optional(),
   /**
-   * `compact` (default) drops nulls, empty values, echoed inputs, and full
-   * frontmatter, caps response size, and returns JSON once as text.
+   * `compact` (default) drops nulls and empty strings, echoed inputs, and full
+   * frontmatter, keeps list keys and revisions, and returns JSON once as text.
    * `full` restores the previous envelope, entity bodies, and structuredContent.
    * `MEMORY_RESPONSE` overrides this.
    */

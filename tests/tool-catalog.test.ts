@@ -55,20 +55,16 @@ function walk(node: unknown, visit: (obj: Record<string, unknown>) => void): voi
 }
 
 describe('MCP toolset profiles', () => {
-  it('defaults to the standard catalog', async () => {
+  it('defaults to the full eager catalog, so existing tool names stay listed', async () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
-    expect(names).toEqual([...STANDARD_TOOLS].sort());
+    expect(names).toEqual([...FULL_TOOLS].sort());
+    expect(names).toEqual(expect.arrayContaining(['apply_changeset', 'reindex', 'people', 'projects', 'notes', 'inbox']));
     expect(names).not.toContain('tool_groups');
-    expect(names).not.toContain('apply_changeset');
   });
 
-  it('eager full lists every historical tool and lazy full enables a group on demand', async () => {
-    const eager = (await (await connect(eagerFull)).listTools()).tools.map(tool => tool.name).sort();
-    expect(eager).toEqual([...FULL_TOOLS].sort());
-    expect(eager).not.toContain('tool_groups');
-
-    const client = await connect({ toolset: 'full' });
+  it('lazy full enables a hidden group on demand', async () => {
+    const client = await connect({ toolset: 'full', tool_discovery: 'lazy' });
     const lazy = (await client.listTools()).tools.map(tool => tool.name);
     expect(lazy).toContain('tool_groups');
     expect(lazy).not.toContain('apply_changeset');
@@ -100,8 +96,8 @@ describe('MCP toolset profiles', () => {
     const yaml = 'name: Cfg\nvault_root: ./vault\nread_only: true\naudit_dir: ./.state/audit\nrouting:\n  note:\n    backend: markdown\n    path: "Notes/{slug}.md"\n';
     await writeFile(file, yaml);
     const loaded = await loadConfig(file);
-    expect(loaded.toolset).toBe('standard');
-    expect(loaded.tool_discovery).toBe('lazy');
+    expect(loaded.toolset).toBe('full');
+    expect(loaded.tool_discovery).toBe('eager');
     expect(loaded.verbose_schema).toBe(false);
     expect(loaded.response).toBe('compact');
     expect(loaded.advertise_output_schema).toBe(false);
@@ -142,7 +138,7 @@ describe('MCP toolset profiles', () => {
 });
 
 describe('advertised tool schemas', () => {
-  it('omits outputSchema, $schema, defaults, and flattens unions in the compact catalog', async () => {
+  it('omits outputSchema and $schema, keeps date types and defaults, and flattens unions', async () => {
     const tools = (await (await connect(eagerFull)).listTools()).tools;
     expect(tools.every(tool => tool.outputSchema === undefined)).toBe(true);
     let dateFields = 0;
@@ -150,20 +146,27 @@ describe('advertised tool schemas', () => {
       expect(tool.inputSchema).not.toHaveProperty('$schema');
       walk(tool.inputSchema, node => {
         if ('$schema' in node) throw new Error(`${tool.name} still advertises $schema`);
-        expect(node.default, tool.name).toBeUndefined();
         expect(node.additionalProperties, tool.name).not.toBe(false);
         if (node.format === 'date' || node.format === 'date-time') {
           dateFields += 1;
           expect(node.pattern, tool.name).toBeUndefined();
-          expect(node.type, tool.name).toBeUndefined();
+          expect(node.type, tool.name).toBe('string');
         }
       });
     }
-    expect(dateFields).toBeGreaterThan(0);
+    expect(dateFields).toBe(24);
     const nameDays = tools.find(tool => tool.name === 'find_name_days');
     expect(nameDays?.inputSchema).toMatchObject({
-      properties: { date: { format: 'date' }, from: { format: 'date' }, to: { format: 'date' } },
+      properties: { date: { type: 'string', format: 'date' }, from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
     });
+    const searchMemory = tools.find(tool => tool.name === 'search_memory')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const claims = tools.find(tool => tool.name === 'get_claims')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const people = tools.find(tool => tool.name === 'list_people')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const relations = tools.find(tool => tool.name === 'get_entity_relations')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    expect(searchMemory.properties?.limit?.default).toBe(20);
+    expect(claims.properties?.limit?.default).toBe(100);
+    expect(people.properties?.limit?.default).toBe(50);
+    expect(relations.properties?.limit?.default).toBe(200);
     const profiles = tools.find(tool => tool.name === 'agent_profiles')?.inputSchema as { oneOf?: unknown; properties?: { action?: { enum?: string[] } } };
     expect(profiles.oneOf).toBeUndefined();
     expect(profiles.properties?.action?.enum).toContain('create');
