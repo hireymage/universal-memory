@@ -23,6 +23,7 @@ afterEach(async () => {
 
 const routing: AppConfig['routing'] = {
   note: { backend: 'markdown', path: '03 Knowledge/{slug}.md' },
+  knowledge: { backend: 'markdown', path: '03 Knowledge/{slug}.md' },
   person: { backend: 'markdown', path: 'People/{slug}.md' },
   decision: { backend: 'markdown', path: '10 Decisions/{slug}.md' },
   task: { backend: 'markdown', path: '11 Tasks/{slug}.md' },
@@ -82,6 +83,84 @@ describe('health check', () => {
     expect(report.changesets).toHaveLength(1);
     expect(report.operations_omitted).toBeGreaterThanOrEqual(1);
     expect(await readFile(path.join(vault, accented.path), 'utf8')).toMatch(/Rodina/);
+    const again = await services.health.run({ maxOps: 1, maxChangesets: 1 });
+    expect(again.changesets.map(changeset => changeset.id)).toEqual(report.changesets.map(changeset => changeset.id));
+    const stored = (await readdir(path.join(services.config.audit_dir, 'changesets'))).filter(name => name.endsWith('.json'));
+    expect(stored).toHaveLength(report.changesets.length);
+  });
+
+  it('keeps a tag cleanup together with a move for the same entity', async () => {
+    const { vault, audit, services } = await setup();
+    const note = await services.memory.create({ type: 'note', title: 'Tagged move', metadata: { tags: ['Rodina', 'rodina'] } });
+    const moved = await services.memory.move(note.metadata.id, 'People/tagged.md', note.revision);
+    const report = await services.health.run();
+    const changeset = JSON.parse(await readFile(path.join(audit, 'changesets', `${report.changesets[0]!.id}.json`), 'utf8')) as {
+      operations: Array<{ kind: string; destination?: string; patch?: { metadata?: { tags?: string[] } } }>;
+    };
+    const moveAt = changeset.operations.findIndex(operation => operation.kind === 'move' && operation.destination?.includes('03 Knowledge/'));
+    const tagsAt = changeset.operations.findIndex(operation => operation.kind === 'update' && operation.patch?.metadata?.tags?.join(',') === 'rodina');
+    expect(moveAt).toBeGreaterThanOrEqual(0);
+    expect(tagsAt).toBeGreaterThan(moveAt);
+    expect(await readFile(path.join(vault, moved.path), 'utf8')).toMatch(/Rodina/);
+  });
+
+  it('does not move or retype an unknown type onto the memory route', async () => {
+    const { vault, services } = await setup();
+    const widget = await services.memory.create({ type: 'widget', title: 'Widget inventory' });
+    await mkdir(path.join(vault, 'Recipes'), { recursive: true });
+    const recipe = path.join(vault, 'Recipes', 'polevka.md');
+    const body = [
+      '---',
+      'id: 01RECIPE',
+      'type: recipe',
+      'title: Polevka',
+      'created_at: "2026-01-01T00:00:00.000Z"',
+      'updated_at: "2026-01-01T00:00:00.000Z"',
+      'aliases: []',
+      'tags: []',
+      'status: active',
+      'schema_version: 1',
+      '---',
+      '',
+      'Cibule.',
+      '',
+    ].join('\n');
+    await writeFile(recipe, body);
+    const report = await services.health.run();
+    expect(report.findings.some(finding => finding.code === 'UNKNOWN_TYPE' && finding.entity_id === widget.metadata.id)).toBe(true);
+    expect(report.findings.some(finding => finding.code === 'UNKNOWN_TYPE' && finding.entity_id === '01RECIPE')).toBe(true);
+    for (const ref of report.changesets) {
+      const changeset = JSON.parse(await readFile(path.join(services.config.audit_dir, 'changesets', `${ref.id}.json`), 'utf8')) as {
+        operations: Array<{ kind: string; entity_id?: string; destination?: string; patch?: { metadata?: { type?: string } } }>;
+      };
+      for (const operation of changeset.operations) {
+        expect(operation.entity_id === widget.metadata.id || operation.entity_id === '01RECIPE').toBe(false);
+        expect(operation.patch?.metadata?.type).not.toBe('memory');
+      }
+    }
+    expect(await readFile(recipe, 'utf8')).toBe(body);
+    expect((await services.memory.get(widget.metadata.id)).metadata.type).toBe('widget');
+  });
+
+  it('retypes in place when the new type resolves to the same path', async () => {
+    const { services } = await setup();
+    const note = await services.memory.create({ type: 'note', title: 'Same path' });
+    const updated = await services.memory.update(note.metadata.id, { metadata: { type: 'knowledge' } }, note.revision);
+    expect(updated.path).toBe(note.path);
+    expect(updated.metadata.type).toBe('knowledge');
+    const event = (await services.audit.list(note.metadata.id, 10)).find(item => item.operation === 'update');
+    expect(event?.details).toMatchObject({ rerouted: false, from_type: 'note', to_type: 'knowledge', from_path: note.path, to_path: note.path });
+  });
+
+  it('groups compact-form lookalikes and refuses a health interval shorter than a minute', async () => {
+    const { services } = await setup();
+    await services.memory.create({ type: 'note', title: 'RTX 2070' });
+    await services.memory.create({ type: 'note', title: 'rtx2070' });
+    await services.memory.create({ type: 'note', title: 'a b' });
+    await services.memory.create({ type: 'note', title: 'ab' });
+    const groups = await services.maintenance.duplicates();
+    expect(groups.some(group => group.map(item => item.title).sort().join('|') === 'RTX 2070|rtx2070')).toBe(true);
+    expect(groups.some(group => new Set(group.map(item => item.title)).size === 2 && group.every(item => item.title === 'a b' || item.title === 'ab'))).toBe(true);
   });
 
   it('repairs a legacy relation link only as a dry-run content update', async () => {
@@ -334,6 +413,27 @@ describe('health schedule and config', () => {
       await expect(loadConfig(file)).rejects.toThrow(/MEMORY_HEALTH_INTERVAL_HOURS/);
     });
     expect(resolveHealth({ enabled: true }, '')).toMatchObject({ enabled: true, interval_hours: 24 });
+    await withEnv('MEMORY_HEALTH_INTERVAL_HOURS', '0.00001', async () => {
+      await expect(loadConfig(file)).rejects.toThrow(/MEMORY_HEALTH_INTERVAL_HOURS/);
+    });
+    await withEnv('MEMORY_HEALTH_INTERVAL_HOURS', '9000', async () => {
+      await expect(loadConfig(file)).rejects.toThrow(/MEMORY_HEALTH_INTERVAL_HOURS/);
+    });
+    await withEnv('MEMORY_HEALTH_INTERVAL_HOURS', '0.5', async () => {
+      expect((await loadConfig(file)).health?.interval_hours).toBe(0.5);
+    });
+  });
+
+  it('a live lock blocks another run and a dead lock does not', async () => {
+    const { audit, services } = await setup();
+    await mkdir(path.join(audit, 'health'), { recursive: true });
+    const lock = path.join(audit, 'health', '.lock');
+    await writeFile(lock, `${process.pid}\n`);
+    await expect(services.health.run()).rejects.toMatchObject({ code: 'CONFLICT' });
+    await writeFile(lock, '99999999\n');
+    const report = await services.health.run();
+    expect(report.applied).toBe(false);
+    await expect(readFile(lock)).rejects.toThrow();
   });
 });
 

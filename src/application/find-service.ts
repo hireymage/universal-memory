@@ -4,7 +4,8 @@ import { parseFindQuery, type ParsedFindQuery } from '../domain/find-query.js';
 import { todayInPrague } from '../domain/name-days.js';
 import { combinedRank, compareSchedule, recencyScore, saturatingScore, scheduleOf, type RankingConfig } from '../domain/ranking.js';
 import { oneSentence } from '../domain/snippet.js';
-import { normalizedForm, similarity, stripAccents } from '../domain/similarity.js';
+import { compactForm, normalizedForm, similarity, stripAccents } from '../domain/similarity.js';
+import { MemoryError } from '../domain/errors.js';
 import type { Entity } from '../domain/types.js';
 import type { SearchIndex } from '../ports/index.js';
 import type { NeuralMemoryService } from './neural-memory-service.js';
@@ -33,6 +34,8 @@ export interface FindResult {
   parsed: ParsedFindQuery;
   order: 'relevance' | 'due';
   hits: FindHit[];
+  /** Set when a type filter is not a registry id or alias. Hits stay empty. */
+  warnings?: Array<{ code: string; message: string }>;
 }
 
 interface Accumulator {
@@ -60,13 +63,26 @@ export class FindService {
   ) {}
 
   async find(input: { query: string; limit?: number; detail?: boolean; order?: 'relevance' | 'due' }): Promise<FindResult> {
+    if (!input.query.trim()) throw new MemoryError('VALIDATION_ERROR', 'query must not be blank');
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 20);
     const order = input.order ?? 'relevance';
     const today = todayInPrague();
     const parsed = parseFindQuery(input.query, today);
+    if (parsed.unresolvedTypes.length) {
+      return {
+        query: input.query,
+        parsed,
+        order,
+        hits: [],
+        warnings: parsed.unresolvedTypes.map(type => ({
+          code: 'UNKNOWN_TYPE',
+          message: `Unknown type "${type}". Use a registry type or an exact alias, for example typ:úkol.`,
+        })),
+      };
+    }
     const rows = new Map<string, Accumulator>();
 
-    for (const entity of await this.lexical(parsed)) {
+    for (const entity of await this.lexical(parsed, order)) {
       if (!matchesFilters(entity, parsed)) continue;
       rows.set(entity.metadata.id, {
         entity,
@@ -110,7 +126,11 @@ export class FindService {
     return { query: input.query, parsed, order, hits };
   }
 
-  private async lexical(parsed: ParsedFindQuery): Promise<Entity[]> {
+  private async lexical(parsed: ParsedFindQuery, order: 'relevance' | 'due'): Promise<Entity[]> {
+    // Due ordering must see every dated match, not only the 200 strongest text hits.
+    if (order === 'due' || parsed.due) {
+      return (await this.index.listAll()).filter(entity => textMatches(entity, parsed.text));
+    }
     if (parsed.text || parsed.types.length) {
       return this.memory.search({
         ...(parsed.text ? { query: parsed.text } : {}),
@@ -214,6 +234,7 @@ function lexicalScore(text: string, entity: Entity): number {
 }
 
 function matchesFilters(entity: Entity, parsed: ParsedFindQuery): boolean {
+  if (entity.metadata.status === 'archived') return false;
   if (parsed.types.length && !parsed.types.includes(entity.metadata.type)) return false;
   if (parsed.tags.length && !parsed.tags.every(tag => hasTag(entity, tag))) return false;
   if (parsed.person && !mentions(entity, parsed.person, PERSON_KEYS)) return false;
@@ -241,16 +262,39 @@ function hasTag(entity: Entity, tag: string): boolean {
   return normalizeTags(entity.metadata.tags).tags.some(item => stripAccents(item) === want);
 }
 
+/**
+ * Whole tokens in the title, aliases, wikilinks, and the named metadata fields.
+ * A body mention of "Nováková" does not satisfy `osoba:Novák`, and `osoba:Jan`
+ * does not match "Janově". Project filters also accept a path segment equal
+ * to the name (`02 Projects/pamat/...`).
+ */
 function mentions(entity: Entity, needle: string, keys: string[]): boolean {
-  const folded = normalizedForm(needle);
-  if (!folded) return true;
-  const blobs = [entity.metadata.title, ...entity.metadata.aliases, ...entity.wikilinks, entity.content, entity.path];
+  const fields = [entity.metadata.title, ...entity.metadata.aliases, ...entity.wikilinks];
   for (const key of keys) {
     const value = entity.metadata[key];
-    if (typeof value === 'string') blobs.push(value);
-    else if (Array.isArray(value)) for (const item of value) if (typeof item === 'string') blobs.push(item);
+    if (typeof value === 'string') fields.push(value);
+    else if (Array.isArray(value)) for (const item of value) if (typeof item === 'string') fields.push(item);
   }
-  return blobs.some(value => normalizedForm(value).includes(folded));
+  if (fields.some(value => tokenCovers(needle, value))) return true;
+  if (keys !== PROJECT_KEYS) return false;
+  const want = compactForm(needle);
+  if (!want) return false;
+  return entity.path.split(/[/\\]/).some(segment => compactForm(segment.replace(/\.md$/i, '')) === want);
+}
+
+function tokenCovers(needle: string, value: string): boolean {
+  const want = normalizedForm(needle).split(' ').filter(Boolean);
+  if (!want.length) return false;
+  const got = new Set(normalizedForm(value).split(' ').filter(Boolean));
+  return want.every(token => got.has(token));
+}
+
+function textMatches(entity: Entity, text: string): boolean {
+  const phrase = normalizedForm(text);
+  if (!phrase) return true;
+  const haystack = normalizedForm([entity.metadata.title, ...entity.metadata.aliases, entity.path, entity.content].join('\n'));
+  if (haystack.includes(phrase)) return true;
+  return phrase.split(' ').filter(token => token.length >= 2).some(token => haystack.includes(token));
 }
 
 function calendarDay(value: unknown): string | undefined {

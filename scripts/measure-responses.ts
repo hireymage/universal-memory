@@ -20,6 +20,7 @@ import type { Services } from '../src/composition.js';
 
 const encoding = getEncoding('o200k_base');
 const tokens = (value: string) => encoding.encode(value).length;
+const advertiseOutput = process.env.MEMORY_OUTPUT_SCHEMA !== 'false' && process.env.MEMORY_OUTPUT_SCHEMA !== '0';
 
 const routing = {
   note: { backend: 'markdown', path: 'Notes/{slug}.md' },
@@ -35,7 +36,7 @@ async function vault(): Promise<{ services: (mode: ResponseMode) => Promise<Serv
   const base: AppConfig = {
     name: 'Measure', vault_root: dir, read_only: false, audit_dir: path.join(root, 'audit'),
     transport: 'stdio', http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'TEST_TOKEN' },
-    routing, toolset: 'full', tool_discovery: 'eager', response: 'full',
+    routing, toolset: 'full', tool_discovery: 'eager', response: 'full', advertise_output_schema: advertiseOutput,
   };
   return {
     services: async (mode) => {
@@ -100,6 +101,7 @@ async function main() {
     ];
 
     console.log('tokenizer: js-tiktoken o200k_base');
+    console.log(`outputSchema: ${advertiseOutput ? 'on (server default)' : 'off'}`);
     console.log('fixture: 10 long notes, 1 person, 1 relation, 1 health report');
     console.log('columns: data tokens inside the JSON, text tokens (what a text client pays), wire tokens (text plus structuredContent)');
     console.log('');

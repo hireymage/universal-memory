@@ -31,8 +31,8 @@ const eagerFull = { toolset: 'full' as const, tool_discovery: 'eager' as const }
 
 function services(config: Partial<AppConfig> = {}): Services {
   return {
-    config: { advertise_output_schema: false, ...config },
-    people: { nameDays: async () => [{ metadata: { id: 'p1', title: 'Martin' } }] },
+    config: { ...config },
+    people: { nameDays: async (from: string) => from === '2026-01-01' ? [] : [{ metadata: { id: 'p1', title: 'Martin' } }] },
   } as unknown as Services;
 }
 
@@ -100,7 +100,7 @@ describe('MCP toolset profiles', () => {
     expect(loaded.tool_discovery).toBe('eager');
     expect(loaded.verbose_schema).toBe(false);
     expect(loaded.response).toBe('compact');
-    expect(loaded.advertise_output_schema).toBe(false);
+    expect(loaded.advertise_output_schema).toBe(true);
     await writeFile(file, `toolset: minimal\n${yaml}`);
     expect((await loadConfig(file)).toolset).toBe('minimal');
     await writeFile(file, `toolset: nope\n${yaml}`);
@@ -112,8 +112,8 @@ describe('MCP toolset profiles', () => {
     await withEnv('MEMORY_TOOLSET', 'nope', async () => {
       await expect(loadConfig(file)).rejects.toThrow(/MEMORY_TOOLSET must be minimal, standard, or full/);
     });
-    await withEnv('MEMORY_OUTPUT_SCHEMA', 'true', async () => {
-      expect((await loadConfig(file)).advertise_output_schema).toBe(true);
+    await withEnv('MEMORY_OUTPUT_SCHEMA', 'false', async () => {
+      expect((await loadConfig(file)).advertise_output_schema).toBe(false);
     });
     await withEnv('MEMORY_OUTPUT_SCHEMA', 'maybe', async () => {
       await expect(loadConfig(file)).rejects.toThrow(/MEMORY_OUTPUT_SCHEMA/);
@@ -138,23 +138,27 @@ describe('MCP toolset profiles', () => {
 });
 
 describe('advertised tool schemas', () => {
-  it('omits outputSchema and $schema, keeps date types and defaults, and flattens unions', async () => {
+  it('advertises outputSchema by default, keeps date types and defaults, and flattens unions', async () => {
     const tools = (await (await connect(eagerFull)).listTools()).tools;
-    expect(tools.every(tool => tool.outputSchema === undefined)).toBe(true);
-    let dateFields = 0;
+    expect(tools.every(tool => tool.outputSchema !== undefined)).toBe(true);
+    const dated = new Set<string>();
     for (const tool of tools) {
       expect(tool.inputSchema).not.toHaveProperty('$schema');
+      expect(tool.outputSchema).not.toHaveProperty('$schema');
       walk(tool.inputSchema, node => {
         if ('$schema' in node) throw new Error(`${tool.name} still advertises $schema`);
         expect(node.additionalProperties, tool.name).not.toBe(false);
         if (node.format === 'date' || node.format === 'date-time') {
-          dateFields += 1;
+          dated.add(tool.name);
           expect(node.pattern, tool.name).toBeUndefined();
           expect(node.type, tool.name).toBe('string');
         }
       });
     }
-    expect(dateFields).toBe(24);
+    for (const name of ['find_name_days', 'find_birthdays', 'get_entity_timeline', 'create_claim']) expect(dated.has(name), name).toBe(true);
+    const output = tools[0]?.outputSchema as { additionalProperties?: boolean; properties?: Record<string, unknown> };
+    expect(output.additionalProperties).toBeUndefined();
+    expect(output.properties).toEqual(expect.objectContaining({ ok: expect.anything(), data: expect.anything(), from: expect.anything(), to: expect.anything(), calendar: expect.anything(), meta: expect.anything() }));
     const nameDays = tools.find(tool => tool.name === 'find_name_days');
     expect(nameDays?.inputSchema).toMatchObject({
       properties: { date: { type: 'string', format: 'date' }, from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
@@ -192,16 +196,14 @@ describe('advertised tool schemas', () => {
     expect(profiles.oneOf?.length).toBeGreaterThan(5);
     const remember = tools.find(tool => tool.name === 'remember')?.inputSchema as { properties?: { content?: { default?: string } }; additionalProperties?: boolean };
     expect(remember.additionalProperties).toBe(false);
+    const output = tools[0]?.outputSchema as { additionalProperties?: boolean };
+    expect(output.additionalProperties).toBe(false);
     expect(remember.properties?.content?.default).toBe('');
   });
 
-  it('can still advertise the shared output envelope, without $schema', async () => {
-    const tools = (await (await connect({ ...eagerFull, advertise_output_schema: true, verbose_schema: true })).listTools()).tools;
-    expect(tools.every(tool => tool.outputSchema !== undefined)).toBe(true);
-    const output = tools[0]?.outputSchema as { additionalProperties?: boolean; properties?: Record<string, unknown> };
-    expect(output.additionalProperties).toBe(false);
-    expect(output).not.toHaveProperty('$schema');
-    expect(output.properties).toHaveProperty('data');
+  it('omits outputSchema when advertise_output_schema is false', async () => {
+    const tools = (await (await connect({ ...eagerFull, advertise_output_schema: false })).listTools()).tools;
+    expect(tools.every(tool => tool.outputSchema === undefined)).toBe(true);
   });
 
   it('still rejects invalid dates and datetimes with the SDK validation error', async () => {
@@ -218,32 +220,38 @@ describe('advertised tool schemas', () => {
     expect(textOf(badTime)).toMatch(/Invalid ISO datetime/);
   });
 
-  it('returns find_name_days fields inside data, once, unless the output schema is advertised', async () => {
-    const expected = {
-      people: [{ metadata: { id: 'p1', title: 'Martin' } }],
+  it('keeps find_name_days from, to, and calendar inside data and beside it', async () => {
+    const window = {
       from: '2026-11-11',
       to: '2026-11-11',
       calendar: [{ date: '2026-11-11', names: ['Martin'] }],
     };
-    const compact = await connect();
-    const quiet = await compact.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
+    const people = [{ metadata: { id: 'p1', title: 'Martin' } }];
+    const client = await connect({ ...eagerFull, advertise_output_schema: false, response: 'compact' });
+    const quiet = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
     expect(quiet.isError).not.toBe(true);
     expect(quiet.structuredContent).toBeUndefined();
-    const quietBody = JSON.parse(textOf(quiet)) as { ok: boolean; data: typeof expected; meta?: unknown; from?: string };
+    const quietBody = JSON.parse(textOf(quiet)) as { ok: boolean; data: { people: typeof people } & typeof window; meta?: unknown; from?: string; to?: string; calendar?: typeof window.calendar };
     expect(quietBody.ok).toBe(true);
     expect(quietBody.meta).toBeUndefined();
-    expect(quietBody.data).toEqual(expected);
-    expect(quietBody.from).toBeUndefined();
+    expect(quietBody.data).toEqual({ people, ...window });
+    expect(quietBody.from).toBe(window.from);
+    expect(quietBody.to).toBe(window.to);
+    expect(quietBody.calendar).toEqual(window.calendar);
+    const empty = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-01-01' } });
+    const emptyBody = JSON.parse(textOf(empty)) as { data: { people: unknown[] } };
+    expect(emptyBody.data.people).toEqual([]);
 
-    const client = await connect({ advertise_output_schema: true });
-    const called = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
+    const advertised = await connect();
+    const called = await advertised.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
     expect(called.isError).not.toBe(true);
-    const body = called.structuredContent as { ok: boolean; data: typeof expected; meta: { api_version: string }; from?: string };
-    expect(Object.keys(body).sort()).toEqual(['data', 'meta', 'ok']);
+    const body = called.structuredContent as { ok: boolean; data: { people: typeof people } & typeof window; from: string; to: string; calendar: typeof window.calendar; meta: { api_version: string } };
+    expect(body.ok).toBe(true);
     expect(body.meta.api_version).toBe('1');
-    expect(body.data).toEqual(expected);
-    expect(body.from).toBeUndefined();
-    const schema = (await client.listTools()).tools.find(tool => tool.name === 'find_name_days')?.outputSchema as { properties?: Record<string, unknown> };
+    expect(body.data).toEqual({ people, ...window });
+    expect(body.from).toBe(window.from);
+    expect(body.calendar).toEqual(window.calendar);
+    const schema = (await advertised.listTools()).tools.find(tool => tool.name === 'find_name_days')?.outputSchema as { properties?: Record<string, unknown> };
     for (const key of Object.keys(body)) expect(schema.properties).toHaveProperty(key);
   });
 });

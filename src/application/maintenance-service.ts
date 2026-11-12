@@ -7,7 +7,7 @@ import { MemoryService } from './memory-service.js';
 import { GraphService } from './graph-service.js';
 import { claimKey, legacyRelationId, normalizeClaims, relationIdentity, structuredRelations } from '../domain/model.js';
 import { compactForm } from '../domain/similarity.js';
-import { escapeRegExp, wikilinkLabel } from '../domain/path-safety.js';
+import { escapeRegExp, wikilinkTarget } from '../domain/path-safety.js';
 
 export class MaintenanceService{
  constructor(private readonly storage:EntityStorage,private readonly index:SearchIndex,private readonly changesets:ChangesetStore,private readonly memory:MemoryService,private readonly audit:AuditSink){}
@@ -20,6 +20,7 @@ export class MaintenanceService{
  async duplicates(scope:Scope={kind:'vault'}){const groups=new Map<string,Array<{id:string;title:string;path:string}>>();for await(const e of this.storage.scan()){if(!entityInScope(e,scope))continue;const key=compactForm(e.metadata.title);if(!key)continue;const list=groups.get(key)??[];list.push({id:e.metadata.id,title:e.metadata.title,path:e.path});groups.set(key,list);}return [...groups.values()].filter(group=>group.length>1);}
  async suggestLinks(scope:Scope={kind:'vault'},limit=100){const all=[];for await(const e of this.storage.scan())if(entityInScope(e,scope))all.push(e);const suggestions=[];for(let i=0;i<all.length;i++)for(let j=i+1;j<all.length;j++){const a=all[i]!,b=all[j]!,shared=a.metadata.tags.filter(tag=>b.metadata.tags.includes(tag));if(shared.length)suggestions.push({source_id:a.metadata.id,target_id:b.metadata.id,reason:'shared_tags',shared_tags:shared});if(suggestions.length>=limit)return suggestions;}return suggestions;}
  async prepare(description:string,operations:ChangeOperation[],diagnostics:Diagnostic[]=[]):Promise<Changeset>{const cs:Changeset={id:ulid(),created_at:new Date().toISOString(),status:'prepared',description,operations,diagnostics};await this.changesets.save(cs);return cs;}
+ async listChangesets():Promise<Changeset[]>{return this.changesets.list();}
  async apply(id:string,client?:string):Promise<{changeset:Changeset;entities:string[]}>{const cs=await this.changesets.get(id);if(!cs)throw new MemoryError('NOT_FOUND',`Changeset not found: ${id}`);if(cs.status!=='prepared')throw new MemoryError('CONFLICT',`Changeset is ${cs.status}`);
    // Validate every precondition before the first write.
    for(const op of cs.operations){
@@ -141,7 +142,7 @@ export class MaintenanceService{
    for await(const entity of this.storage.scan()){
      if(entity.metadata.id===source.metadata.id||entity.metadata.id===target.metadata.id)continue;
      let content=entity.content;let changed=false;
-     const safeTitle=wikilinkLabel(target.metadata.title)||'untitled';
+     const safeTitle=wikilinkTarget(target.metadata.title)||'untitled';
      for(const identifier of identifiers)for(const flags of ['', 'i']){const rewritten=content.replace(new RegExp(`\\[\\[\\s*${escapeRegExp(identifier)}([\\]|#]{1,2})`,'g'+flags),(_match,suffix:string)=>`[[${safeTitle}${suffix}`);if(rewritten!==content){content=rewritten;changed=true;break;}}
      const metadata:EntityMetadata={...entity.metadata};
      const relations=structuredRelations(entity.metadata);const legacy=Array.isArray(entity.metadata.relationships)?entity.metadata.relationships:[];

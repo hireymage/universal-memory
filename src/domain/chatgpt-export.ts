@@ -1,6 +1,6 @@
 import { inflateRawSync } from 'node:zlib';
 import { MemoryError } from './errors.js';
-import { MAX_ENTRY_BYTES, MAX_EXPORT_BYTES, readBoundedFile } from './bounded-read.js';
+import { entryByteLimit, exportByteLimit, readBoundedFile } from './bounded-read.js';
 
 /**
  * Pure ChatGPT export parser. Accepts either the official export archive
@@ -41,8 +41,9 @@ const ZIP_ENTRY_NAME = 'conversations.json';
 const toIso = (value: unknown): string =>
   typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : '';
 
-export function extractZipEntry(buffer: Buffer, wantedName: string, maxEntryBytes = MAX_ENTRY_BYTES): Buffer {
-  if (buffer.length > MAX_EXPORT_BYTES) throw new MemoryError('VALIDATION_ERROR', `ZIP archive is too large (limit ${MAX_EXPORT_BYTES} bytes)`);
+export function extractZipEntry(buffer: Buffer, wantedName: string, maxEntryBytes = entryByteLimit()): Buffer {
+  const archiveCap = exportByteLimit();
+  if (buffer.length > archiveCap) throw new MemoryError('VALIDATION_ERROR', `ZIP archive is too large (limit ${archiveCap} bytes)`);
   if (unsafeZipName(wantedName)) throw new MemoryError('VALIDATION_ERROR', 'ZIP entry name is not allowed');
   let eocd = -1;
   for (let i = buffer.length - 4; i >= 0; i--) {

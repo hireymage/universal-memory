@@ -36,7 +36,10 @@ from .vectors import DEFAULT_MODEL, SentenceEncoder, VectorIndex
 MAX_BODY = 16 * 1024 * 1024
 MAX_TEXT = 100_000
 MAX_QUERY = 2_000
-MAX_REBUILD = 100
+# The TypeScript client posts at most 40 entities per call
+# (REBUILD_CHUNK in src/adapters/neural/bdh-client.ts). The cap is a backstop
+# for a direct caller; the 16 MiB body limit is the memory bound.
+MAX_REBUILD = 1000
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -271,10 +274,15 @@ def authorized(handler: BaseHTTPRequestHandler, token: str) -> bool:
     if not token:
         return True
     header = handler.headers.get("Authorization", "")
-    expected = f"Bearer {token}"
-    if len(header) != len(expected):
+    # compare_digest on str rejects non-ASCII with TypeError. Bytes do not.
+    try:
+        got = header.encode("utf-8")
+        expected = f"Bearer {token}".encode("utf-8")
+    except (UnicodeError, AttributeError):
         return False
-    return hmac.compare_digest(header, expected)
+    if len(got) != len(expected):
+        return False
+    return hmac.compare_digest(got, expected)
 
 
 def host_permitted(handler: BaseHTTPRequestHandler, bind: str) -> bool:

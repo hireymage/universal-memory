@@ -54,10 +54,12 @@ function request(port: number, headers: Record<string, string>, method = 'GET', 
 
 describe('vault path confinement', () => {
   it('rejects parent segments, absolute paths, null bytes, and NFKC lookalikes', async () => {
-    const { services } = await setup();
+    const { vault, services } = await setup();
     await expect(services.storage.getByPath('../secret.md')).rejects.toMatchObject({ code: 'PATH_ESCAPE' });
     await expect(services.storage.getByPath('/etc/passwd')).rejects.toMatchObject({ code: 'PATH_ESCAPE' });
     await expect(services.storage.getByPath('foo\0.md')).rejects.toMatchObject({ code: 'PATH_ESCAPE' });
+    await writeFile(path.join(vault, 'plain.md'), 'not a directory');
+    await expect(services.storage.getByPath('plain.md/nested')).rejects.toMatchObject({ code: 'PATH_ESCAPE' });
     await expect(services.memory.create({
       type: 'folder_collection', title: 'Escape', metadata: { collection_path: `ok/${'\uFF0E'.repeat(2)}/etc` },
     })).rejects.toMatchObject({ code: 'PATH_ESCAPE' });
@@ -139,6 +141,11 @@ describe('link text and regular expressions', () => {
     expect(line).toContain('<!-- rel:rel-1 -->');
   });
 
+  it('keeps # in link targets so C# and Issue #12 still resolve', () => {
+    const line = relationBulletLine({ title: 'Issue #12 plan', path: 'Notes/C#.md' }, 'rel-2');
+    expect(line).toContain('[[C#|Issue #12 plan]]');
+  });
+
   it('treats a hostile relation id as a literal marker', () => {
     const id = '(a+)+';
     const content = `${'a'.repeat(40)}\n- [[x]] <!-- rel:${id} -->\nkeep\n`;
@@ -188,6 +195,8 @@ describe('export limits', () => {
 describe('HTTP guards', () => {
   it('hides internal errors and does not scan the vault for readiness', async () => {
     expect(publicHttpError(new Error('ENOENT: open /vault/secret.md'))).toEqual({ status: 500, code: 'INTERNAL_ERROR', message: 'Internal error' });
+    expect(publicHttpError(Object.assign(new Error('request entity too large'), { status: 413 }))).toEqual({ status: 413, code: 'VALIDATION_ERROR', message: 'Request body is too large' });
+    expect(publicHttpError(Object.assign(new SyntaxError('Unexpected token'), { statusCode: 400 }))).toEqual({ status: 400, code: 'VALIDATION_ERROR', message: 'Request body must be JSON' });
     const { root, config } = await setup();
     config.vault_root = path.join(root, 'missing-vault');
     const services = await compose(config);
@@ -203,7 +212,7 @@ describe('HTTP guards', () => {
     expect(ready.body).toContain('Vault is not accessible');
   });
 
-  it('rejects a foreign Host on loopback and on a wildcard bind', async () => {
+  it('rejects a foreign Host on loopback and a foreign Origin on a published bind', async () => {
     const { services } = await setup();
     const server = await new Promise<Server>((resolve) => {
       const listening = createHttpApp(services).listen(0, '127.0.0.1', () => resolve(listening));
@@ -225,8 +234,18 @@ describe('HTTP guards', () => {
       servers.push(wideServer);
       const wideAddress = wideServer.address();
       if (!wideAddress || typeof wideAddress === 'string') throw new Error('no port');
-      expect((await request(wideAddress.port, { host: 'evil.example' })).status).toBe(403);
-      expect((await request(wideAddress.port, { host: `127.0.0.1:${wideAddress.port}` })).status).toBe(200);
+      const lanHost = `192.168.1.10:${wideAddress.port}`;
+      expect((await request(wideAddress.port, { host: lanHost })).status).toBe(200);
+      expect((await request(wideAddress.port, { host: lanHost, origin: 'http://evil.example' })).status).toBe(403);
+      const named = await setup({ http: { bind: '0.0.0.0', port: 3333, allowed_origins: [], allowed_hosts: ['memory.local'], bearer_token_env: 'SECURITY_HTTP_TOKEN' } });
+      const namedServer = await new Promise<Server>((resolve) => {
+        const listening = createHttpApp(named.services).listen(0, '127.0.0.1', () => resolve(listening));
+      });
+      servers.push(namedServer);
+      const namedAddress = namedServer.address();
+      if (!namedAddress || typeof namedAddress === 'string') throw new Error('no port');
+      expect((await request(namedAddress.port, { host: 'memory.local' })).status).toBe(200);
+      expect((await request(namedAddress.port, { host: 'evil.example' })).status).toBe(403);
     } finally {
       delete process.env.SECURITY_HTTP_TOKEN;
     }

@@ -32,13 +32,16 @@ def _raw(
     host: str | None = None,
     body: bytes | None = None,
     token: str | None = None,
+    authorization: str | None = None,
     content_length: str | None = None,
 ) -> tuple[int, dict]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
         connection.putrequest(method, path, skip_host=True)
         connection.putheader("Host", host or f"127.0.0.1:{port}")
-        if token is not None:
+        if authorization is not None:
+            connection.putheader("Authorization", authorization)
+        elif token is not None:
             connection.putheader("Authorization", f"Bearer {token}")
         payload = body or b""
         if content_length is not None:
@@ -151,6 +154,37 @@ class SidecarApiTest(unittest.TestCase):
         self.assertEqual(with_vectors["vector"], {"bridge": "vec-1"})
         self.assertNotIn("secret", json.dumps(with_vectors))
 
+    def test_ids_reads_revisions_off_a_real_vector_index(self) -> None:
+        import torch
+        from bdh_memory.vectors import VectorIndex
+
+        class Encoder:
+            dim = 4
+
+            def encode(self, texts):
+                rows = [torch.ones(self.dim) for _ in texts]
+                return torch.stack(rows) if rows else torch.zeros((0, self.dim))
+
+        index = VectorIndex(Encoder(), Path(self.tmp.name) / "vectors")
+        self.assertTrue(hasattr(index, "revisions"))
+        self.assertTrue(index.upsert("bridge", "Secret title", [], "secret body", "vec-9"))
+        self.app.vectors = index
+        status, ids = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200, ids)
+        self.assertEqual(ids["vector"], {"bridge": "vec-9"})
+        self.assertNotIn("secret", json.dumps(ids))
+        status, created = _post(
+            f"{self.base}/v1/upsert",
+            {"id": "bridge", "title": "Secret title", "aliases": [], "content": "secret body", "revision": "rev-9"},
+            token="test-token",
+        )
+        self.assertEqual(status, 200, created)
+        status, ids = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200, ids)
+        self.assertEqual(ids["bdh"], {"bridge": "rev-9"})
+        self.assertEqual(ids["vector"], {"bridge": "rev-9"})
+        self.assertNotIn("secret", json.dumps(ids))
+
     def test_non_loopback_without_a_token_is_refused(self) -> None:
         bare = MemoryApp(AssociativeBDH(n=32, k=2, seed=1), self.store, token="")
         with self.assertRaises(SystemExit):
@@ -192,6 +226,17 @@ class InputLimitsTest(unittest.TestCase):
         status, bad = _raw(self.port, "POST", "/v1/upsert", body=b"{}", token="test-token", content_length="nope")
         self.assertEqual(status, 400)
         self.assertIn("Content-Length", bad["error"]["message"])
+
+    def test_non_ascii_authorization_is_unauthorized(self) -> None:
+        status, body = _raw(
+            self.port,
+            "POST",
+            "/v1/associate",
+            body=b'{"query":"hi"}',
+            authorization="Bearer test-tok\u00e9",
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(body["error"]["code"], "AUTH_REQUIRED")
 
 
 class HandlerFactorySmokeTest(unittest.TestCase):

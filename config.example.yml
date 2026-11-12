@@ -12,15 +12,17 @@ toolset: full
 # tool_discovery: eager
 # verbose_schema: false
 # response: compact
-# Repeat the generic result envelope as outputSchema on every tool. Off saves a large
-# slice of tools/list. Override with MEMORY_OUTPUT_SCHEMA=true.
-advertise_output_schema: false
+# outputSchema is on by default. Low-token opt-in:
+#   MEMORY_TOOLSET=standard MEMORY_RESPONSE=compact MEMORY_OUTPUT_SCHEMA=false
+advertise_output_schema: true
 http:
   bind: 127.0.0.1
   port: 3333
   allowed_origins: []
-  # Extra hostnames accepted when bind is not loopback. Localhost is always
-  # included unless MEMORY_HTTP_ALLOW_ANY_HOST=1.
+  # On a non-loopback bind, set this to also restrict the Host header.
+  # Unset: any Host is accepted (the bearer token is required). Browser Origin
+  # is still limited to localhost unless allowed_origins lists more names.
+  # MEMORY_HTTP_ALLOW_ANY_HOST=1 turns both checks off.
   # allowed_hosts: []
   bearer_token_env: MEMORY_API_TOKEN
 # Follow symlinks inside the vault. Off: a directory symlink must not redirect

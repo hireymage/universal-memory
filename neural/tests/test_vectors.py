@@ -1,14 +1,16 @@
 """Vector layer tests. A deterministic bag-of-words encoder stands in for the model,
 so these run without downloading weights."""
 
+import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 import torch
 
 from bdh_memory.model import AssociativeBDH
-from bdh_memory.server import MemoryApp, rebuild, upsert, remove, associate
+from bdh_memory.server import MemoryApp, rebuild, upsert, remove, associate, min_score_from_env
 from bdh_memory.store import StateStore
 from bdh_memory.vectors import VectorIndex, passage_text, query_text
 
@@ -146,6 +148,53 @@ class VectorFloorTest(unittest.TestCase):
         self.assertEqual({i for i, _ in self.index.search("database", 5, min_score=-2)}, {"match", "other"})
         self.assertEqual([i for i, _ in self.index.search("database", 5, min_score=0.99)], ["match"])
         self.assertEqual(self.index.search("database", 5, min_score=1.1), [])
+
+    def test_default_floor_is_zero_without_an_override(self):
+        self.assertEqual(self.index.min_score, 0.0)
+        self.assertEqual([i for i, _ in self.index.search("database", 5)], ["match"])
+
+    def test_concurrent_upsert_cannot_retarget_inflight_scores(self):
+        errors: list[str] = []
+
+        def searcher() -> None:
+            for _ in range(40):
+                try:
+                    for entity_id, _score in self.index.search("database", 5, min_score=-2):
+                        if entity_id not in {"match", "other"}:
+                            errors.append(entity_id)
+                except Exception as error:  # noqa: BLE001 — the test records any race
+                    errors.append(repr(error))
+
+        def writer() -> None:
+            for generation in range(40):
+                self.index.upsert("other", "other", [], "unrelated", f"r{generation}")
+                self.index.remove("other")
+
+        threads = [threading.Thread(target=searcher), threading.Thread(target=writer)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+
+
+class MinScoreEnvTest(unittest.TestCase):
+    def test_reads_a_finite_floor_and_rejects_garbage(self):
+        previous = os.environ.get("BDH_VECTOR_MIN_SCORE")
+        try:
+            os.environ["BDH_VECTOR_MIN_SCORE"] = "0.2"
+            self.assertEqual(min_score_from_env(), 0.2)
+            os.environ["BDH_VECTOR_MIN_SCORE"] = "nope"
+            with self.assertRaises(SystemExit):
+                min_score_from_env()
+            os.environ["BDH_VECTOR_MIN_SCORE"] = "nan"
+            with self.assertRaises(SystemExit):
+                min_score_from_env()
+        finally:
+            if previous is None:
+                os.environ.pop("BDH_VECTOR_MIN_SCORE", None)
+            else:
+                os.environ["BDH_VECTOR_MIN_SCORE"] = previous
 
 
 if __name__ == "__main__":

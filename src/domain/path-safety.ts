@@ -15,11 +15,17 @@ export function escapeRegExp(value: string): string {
 }
 
 /**
- * Text placed inside `[[...]]`. Brackets, aliases, and newlines would break
- * out of the link and inject Markdown into another note.
+ * Wikilink target (`[[this]]` or the part before `|`). `#` stays, so
+ * "Issue #12 plan" and a file named `C#` still resolve. Newlines and brackets
+ * are the characters that close the link or inject another line.
  */
-export function wikilinkLabel(value: string): string {
-  return value.replace(/[\[\]|#\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+export function wikilinkTarget(value: string): string {
+  return value.replace(/[\r\n\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+/** Alias text after `|`. `#` stays. `|` and brackets would split or close the link. */
+export function wikilinkAlias(value: string): string {
+  return value.replace(/[\r\n\[\]|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -47,7 +53,7 @@ export async function assertContained(root: string, absolute: string): Promise<v
   let rootReal = resolvedRoot;
   try { rootReal = await realpath(resolvedRoot); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryError('PATH_ESCAPE', 'Path is not accessible');
   }
   const relative = path.relative(resolvedRoot, resolved);
   const segments = relative.split(path.sep).filter(Boolean);
@@ -61,13 +67,15 @@ export async function assertContained(root: string, absolute: string): Promise<v
     let stats;
     try { stats = await lstat(current); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryError('PATH_ESCAPE', 'Path is not accessible');
       if (index === 0) return;
-      const parentReal = await realpath(path.dirname(current));
+      let parentReal: string;
+      try { parentReal = await realpath(path.dirname(current)); }
+      catch { throw new MemoryError('PATH_ESCAPE', 'Path is not accessible'); }
       if (!isInside(rootReal, parentReal)) throw new MemoryError('PATH_ESCAPE', 'Path escapes its root');
       return;
     }
-    if (stats.isSymbolicLink()) throw new MemoryError('PATH_ESCAPE', 'Symlinks are not followed');
+    if (stats.isSymbolicLink()) throw new MemoryError('PATH_ESCAPE', 'Symlinks are not followed. Set follow_symlinks or MEMORY_ALLOW_SYMLINKS=1 to allow them.');
   }
   try {
     const real = await realpath(current);
@@ -75,7 +83,7 @@ export async function assertContained(root: string, absolute: string): Promise<v
   } catch (error) {
     if (error instanceof MemoryError) throw error;
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
+    throw new MemoryError('PATH_ESCAPE', 'Path is not accessible');
   }
 }
 

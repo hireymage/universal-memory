@@ -25,6 +25,8 @@ export interface PresentOptions {
   /** When true, the same envelope is also returned as structuredContent. */
   duplicate?: boolean;
   budgetChars?: number;
+  /** Envelope siblings of `data`. `find_name_days` keeps from/to/calendar here. */
+  extras?: Record<string, unknown>;
 }
 
 interface ToolText {
@@ -53,7 +55,7 @@ function packageEnvelope(ok: boolean, dataOrError: unknown, options: PresentOpti
     ? dataOrError
     : fitBudget(compactValue(dataOrError, options), options.budgetChars ?? RESPONSE_CHAR_BUDGET);
   const envelope: Record<string, unknown> = ok
-    ? { ok: true, data: body }
+    ? { ok: true, data: body, ...(options.extras ?? {}) }
     : { ok: false, error: body };
   if (options.mode === 'full' || options.duplicate) {
     envelope.meta = { api_version: '1', request_id: crypto.randomUUID() };
@@ -195,7 +197,7 @@ function compactAssociate(value: Record<string, unknown>, options: PresentOption
 function compactSideHit(hit: unknown, options: PresentOptions): unknown {
   if (!hit || typeof hit !== 'object' || Array.isArray(hit)) return compactValue(hit, options);
   const record = hit as Record<string, unknown>;
-  const { snippet: _snippet, status: _status, revision: _revision, note: _note, ...rest } = record;
+  const { snippet: _snippet, status: _status, note: _note, ...rest } = record;
   const out = compactValue(rest, options);
   if (!out || typeof out !== 'object' || Array.isArray(out)) return out;
   if (typeof record.snippet === 'string' && record.snippet && options.detail) {
@@ -216,6 +218,7 @@ function compactFind(value: Record<string, unknown>, options: PresentOptions): R
     out.parsed = compactValue(filters, options);
   }
   if (value.order && value.order !== 'relevance') out.order = value.order;
+  if (Array.isArray(value.warnings) && value.warnings.length) out.warnings = value.warnings;
   out.hits = compactValue(value.hits, options);
   return out;
 }

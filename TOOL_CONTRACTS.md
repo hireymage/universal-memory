@@ -1,6 +1,6 @@
 # MCP tool contracts
 
-All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. The schema advertised by tools/list is compact unless `verbose_schema` / `MEMORY_VERBOSE_SCHEMA` is set: unions are flattened, and the server still validates the original Zod schema (including real ISO dates). Defaults stay visible. Both modes omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time` and `type` stays `string`. `outputSchema` is omitted unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is set. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). `tool_discovery` / `MEMORY_TOOL_DISCOVERY` defaults to `eager` (every selected name). `lazy` hides aliases, maintenance, agents, and neural behind `tool_groups` until that session enables a group. Every successful compact result is JSON text `{"ok":true,"data":{...}}` with no `meta` and no `structuredContent`. List hits keep `revision`. `detail: true` returns frontmatter and the full body. `retrieve_context` returns full entities. Empty lists stay empty lists. `response` / `MEMORY_RESPONSE=full` restores the previous envelope:
+All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. The schema advertised by tools/list is compact unless `verbose_schema` / `MEMORY_VERBOSE_SCHEMA` is set: unions are flattened, defaults stay visible, and the server still validates the original Zod schema (including real ISO dates). Both modes omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time` and `type` stays `string`. `outputSchema` is advertised unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is false. The envelope allows optional `from`, `to`, and `calendar` so `find_name_days` can keep those fields beside `data` and inside it. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). `tool_discovery` / `MEMORY_TOOL_DISCOVERY` defaults to `eager` (every selected name). `lazy` hides aliases, maintenance, agents, and neural behind `tool_groups` until that session enables a group. With `outputSchema` off, a compact result is JSON text `{"ok":true,"data":{...}}` and list hits still keep `revision`. `detail: true` returns frontmatter and the full body. `retrieve_context` returns full entities. Empty lists stay empty lists. `response` / `MEMORY_RESPONSE=full`, or an advertised output schema, restores the previous envelope:
 
 ```json
 {"ok":true,"data":{},"meta":{"api_version":"1","request_id":"uuid"}}
@@ -40,7 +40,7 @@ Domain tools use a discriminating `action` enum, which gives small models one un
 
 `link_entity_to_project` is represented by `link_entities` with the project as source or target. This prevents two implementations of relationship behavior. Older convenience names can be added later as aliases without changing semantics.
 
-`find_name_days` returns `{people, from, to, calendar}` inside `data`. `from`, `to`, and `calendar` are not siblings of `data`.
+`find_name_days` returns `{people, from, to, calendar}` inside `data`, and the same `from`, `to`, and `calendar` beside `data`. An empty day keeps `people: []`.
 
 ## Agent profiles
 
@@ -121,7 +121,7 @@ Two protection rules hold everywhere:
 | `inspect_memory` | `{scope}` | inventory and diagnostics, read-only |
 | `validate_memory` | `{scope}` | validation diagnostics, read-only |
 | `find_broken_links` | `{scope}` | unresolved source/link records |
-| `find_duplicates` | `{scope}` | accent-stripped compact-title candidate groups (`Novák` with `Novak`), never merges |
+| `find_duplicates` | `{scope}` | compact-title candidate groups (`Novák` with `Novak`, and also `RTX 2070` with `rtx2070`), never merges |
 | `suggest_links` | `{scope,limit}` | shared-tag suggestions, never writes |
 | `scan_external_files` | `{scope,include_content?,max_content_chars?}` | unmanaged Markdown paths, hashes and optional bounded content; read-only |
 | `prepare_file_adoption` | `{path,expected_revision,entity_type,title,metadata?}` | dry-run changeset that preserves the file body and adds managed frontmatter in place |

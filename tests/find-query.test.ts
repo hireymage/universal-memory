@@ -30,6 +30,13 @@ describe('find query filters', () => {
     expect(parseFindQuery('od:mesic', today).since).toBe('2026-10-12');
   });
 
+  it('reports a type that is not an exact alias', () => {
+    const parsed = parseFindQuery('typ:úkoly mléko', today);
+    expect(parsed.types).toEqual([]);
+    expect(parsed.unresolvedTypes).toEqual(['úkoly']);
+    expect(parsed.text).toBe('mléko');
+  });
+
   it('leaves non-filter colons in the text', () => {
     expect(parseFindQuery('schůzka 14:30 n8n:prod', today).text).toBe('schůzka 14:30 n8n:prod');
     expect(parseFindQuery('do:not-a-date mléko', today).text).toBe('do:not-a-date mléko');

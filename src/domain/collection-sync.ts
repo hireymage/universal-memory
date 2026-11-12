@@ -1,6 +1,6 @@
 import type { Entity } from './types.js';
 import { MemoryError } from './errors.js';
-import { escapeRegExp, wikilinkLabel } from './path-safety.js';
+import { escapeRegExp, wikilinkAlias, wikilinkTarget } from './path-safety.js';
 
 /**
  * Folder-collection index sync (Step 8).
@@ -33,8 +33,8 @@ const contentsLinkRe = (target: string): RegExp =>
   new RegExp(`^-\\s*\\[\\[[^\\]|]*${escapeRegExp(target)}[^\\]|]*(\\|[^\\]]*)?\\]\\]\\s*$`, 'm');
 
 export function upsertContents(current: string, target: string, display: string): { content: string; changed: boolean } {
-  const safeTarget = wikilinkLabel(target);
-  const safeDisplay = wikilinkLabel(display) || safeTarget;
+  const safeTarget = wikilinkTarget(target);
+  const safeDisplay = wikilinkAlias(display) || safeTarget;
   if (!safeTarget) return { content: current, changed: false };
   const link = `- [[${safeTarget}|${safeDisplay}]]`;
   if (contentsLinkRe(safeTarget).test(current)) return { content: current, changed: false };

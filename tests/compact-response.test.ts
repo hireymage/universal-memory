@@ -27,7 +27,7 @@ async function setup(extra: Partial<AppConfig> = {}) {
   const config: AppConfig = {
     name: 'Compact', vault_root: vault, read_only: false, audit_dir: path.join(root, 'audit'),
     transport: 'stdio', http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'TEST_TOKEN' },
-    routing, response: 'compact', toolset: 'full', tool_discovery: 'eager', ...extra,
+    routing, response: 'compact', toolset: 'full', tool_discovery: 'eager', advertise_output_schema: false, ...extra,
   };
   return { vault, services: await compose(config) };
 }
@@ -118,6 +118,19 @@ describe('compact MCP responses', () => {
     expect(dedup.decision).not.toBe('no_match');
     expect(dedup.candidates[0]?.entity).not.toHaveProperty('content');
     expect(dedup.candidates[0]?.entity.id).toEqual(expect.any(String));
+    await client.close();
+  });
+
+  it('advertised output schema keeps the compact body and adds structuredContent', async () => {
+    const { services } = await setup({ advertise_output_schema: true });
+    const created = await services.memory.create({ type: 'note', title: 'Listed', content: 'Short enough to keep.' });
+    const client = await connect(services);
+    const result = await client.callTool({ name: 'recall', arguments: { id: created.metadata.id } });
+    const structured = result.structuredContent as { ok: boolean; data: { id: string; revision: string }; meta: { api_version: string } };
+    expect(structured.ok).toBe(true);
+    expect(structured.meta.api_version).toBe('1');
+    expect(structured.data.id).toBe(created.metadata.id);
+    expect(structured.data.revision).toBe(created.revision);
     await client.close();
   });
 
