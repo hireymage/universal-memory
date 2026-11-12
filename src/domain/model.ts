@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Claim, EntityMetadata, Relation } from './types.js';
 import { MemoryError } from './errors.js';
-import { escapeRegExp, wikilinkLabel } from './path-safety.js';
+import { escapeRegExp, wikilinkAlias, wikilinkTarget } from './path-safety.js';
 
 /**
  * Deterministic id for a legacy `relationships` entry ({type, target_id} with
@@ -164,8 +164,8 @@ export function relationBulletLine(target: { title: string; path: string }, rela
   const name = parts[parts.length - 1] ?? '';
   // Folder notes are all called index.md; qualify them with the folder so the link is unambiguous.
   const rawLink = name === 'index' && parts.length > 1 ? `${parts[parts.length - 2]}/index` : name;
-  const link = wikilinkLabel(rawLink) || 'note';
-  const title = wikilinkLabel(target.title) || link;
+  const link = wikilinkTarget(rawLink) || 'note';
+  const title = wikilinkAlias(target.title) || link;
   const marker = relationId.replace(/[^\w-]/g, '');
   return `- [[${link}|${title}]] <!-- rel:${marker} -->`;
 }

@@ -117,4 +117,5 @@ export interface AuditSink {
 export interface ChangesetStore {
   save(changeset: Changeset): Promise<void>;
   get(id: string): Promise<Changeset | undefined>;
+  list(): Promise<Changeset[]>;
 }

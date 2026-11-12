@@ -38,10 +38,13 @@ export function hostnameOf(value: string): string {
 /**
  * Host and Origin allow-lists passed to `createMcpExpressApp`.
  * Loopback binds keep the SDK's automatic localhost checks unless the operator
- * adds names. Non-loopback binds (the container listens on 0.0.0.0) allow
- * localhost plus `allowed_hosts` / `allowed_origins`, so a browser page on
- * another name cannot DNS-rebind onto the published port.
- * `MEMORY_HTTP_ALLOW_ANY_HOST=1` turns the non-loopback check off.
+ * adds names. That is the DNS-rebinding boundary for a server with no token.
+ *
+ * A non-loopback bind already requires a bearer token. Host is not forced to
+ * localhost: a LAN client sends Host as its IP, and an attacker who can set
+ * Host can send `localhost` anyway. Browser requests still carry Origin, which
+ * must be localhost or `allowed_origins`. Set `http.allowed_hosts` to also
+ * restrict Host. `MEMORY_HTTP_ALLOW_ANY_HOST=1` turns both checks off.
  */
 export function httpGuardLists(
   bind: string,
@@ -61,7 +64,7 @@ export function httpGuardLists(
     return originHosts.length ? { allowedOrigins: originHosts } : {};
   }
   return {
-    allowedHosts: unique([...LOCAL_HOSTS, ...extraHosts]),
+    ...(extraHosts.length ? { allowedHosts: unique([...LOCAL_HOSTS, ...extraHosts]) } : {}),
     allowedOrigins: unique([...LOCAL_HOSTS, ...originHosts]),
   };
 }
@@ -100,8 +103,18 @@ export function httpStatus(code: string): number {
   }
 }
 
-/** MemoryError text is safe to return. Everything else stays on stderr. */
+function numericStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const record = error as { status?: unknown; statusCode?: unknown };
+  const value = typeof record.status === 'number' ? record.status : record.statusCode;
+  return typeof value === 'number' && value >= 400 && value < 600 ? value : undefined;
+}
+
+/** MemoryError text is safe to return. Parser limits get a fixed message. Everything else stays on stderr. */
 export function publicHttpError(error: unknown): { status: number; code: string; message: string } {
   if (error instanceof MemoryError) return { status: httpStatus(error.code), code: error.code, message: error.message };
+  const status = numericStatus(error);
+  if (status === 413) return { status: 413, code: 'VALIDATION_ERROR', message: 'Request body is too large' };
+  if (status === 400) return { status: 400, code: 'VALIDATION_ERROR', message: 'Request body must be JSON' };
   return { status: 500, code: 'INTERNAL_ERROR', message: 'Internal error' };
 }

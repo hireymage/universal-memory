@@ -35,9 +35,9 @@ async function listed(toolset: Toolset, advertiseOutput: boolean) {
   return tools;
 }
 
-const advertiseOutput = process.env.MEMORY_OUTPUT_SCHEMA === 'true' || process.env.MEMORY_OUTPUT_SCHEMA === '1';
+const advertiseOutput = process.env.MEMORY_OUTPUT_SCHEMA !== 'false' && process.env.MEMORY_OUTPUT_SCHEMA !== '0';
 console.log(`tokenizer: js-tiktoken o200k_base`);
-console.log(`outputSchema: ${advertiseOutput ? 'on' : 'off (default)'}`);
+console.log(`outputSchema: ${advertiseOutput ? 'on (server default)' : 'off'}`);
 console.log('');
 
 for (const toolset of TOOLSETS) {

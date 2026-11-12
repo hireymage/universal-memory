@@ -75,11 +75,14 @@ Výstup:
 - jeden auditní záznam `operation: "health_check"` s počty,
 - nanejvýš `health.max_changesets` changesetů (výchozí 5, zhruba 50 operací každý).
 
-Opravitelné věci v changesetu, pořád jen návrh:
+Opravitelné věci v changesetu, pořád jen návrh. Když jedna entita potřebuje víc věcí najednou, zůstanou spolu (přesun je první, protože přejmenování nemění revizi):
 
-- přesun nebo změna typu, když složka nesedí na typ,
+- přesun souboru, jehož **nakonfigurovaný** typ leží ve špatné složce,
+- přetypování jen když je název přesný alias známého typu (`todo` → `task`),
 - sjednocení tagů,
 - oprava relačního odkazu (`- [[název]] <!-- rel:ID -->` → odkaz na basename).
+
+Neznámý typ (`recipe` ve složce `Recipes/`, `widget` v `Memory/`) se jen nahlásí. Návrh ho nepřesune do `Memory/` a nepřepíše na `memory`. Stejný připravený changeset se při dalším běhu nezaloží znovu.
 
 Rozdíl indexu nebo sidecar přidá doporučení `reindex`. Kontrola ho nespustí a changeset neaplikuje. Mazání v návrhu není.
 
@@ -95,7 +98,7 @@ health:
   max_changesets: 5
 ```
 
-`MEMORY_HEALTH_INTERVAL_HOURS` přepíše interval. Časovač je `setInterval().unref()` s malým rozptylem a zámkem, aby dva běhy neběžely přes sebe. Startuje jen dlouhý HTTP `serve`. Stdio a jednorázové příkazy ho nespouští.
+`MEMORY_HEALTH_INTERVAL_HOURS` přepíše interval, ale jen v rozmezí od jedné minuty do 8760 hodin. Menší nebo větší hodnota server nespustí. Časovač je `setInterval().unref()` s malým rozptylem. Zámek je soubor `audit_dir/health/.lock`, takže CLI `health` a timer ve `serve` neběží najednou ani ve dvou procesech. Startuje jen dlouhý HTTP `serve`. Stdio a jednorázové příkazy ho nespouští.
 
 Spuštění rukou:
 

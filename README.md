@@ -27,7 +27,7 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 
 `standard` can prepare a merge changeset, but `apply_changeset` is maintenance and stays on `full`. The safety model does not change with the profile: `read_only` still defaults to true, writes still require `expected_revision`, nothing is deleted, and maintenance is still dry-run then `apply_changeset`.
 
-`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the same result envelope on every tool. It is off by default. Results are still returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates.
+`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the result envelope on every tool. It stays **on** by default, so a client that validates `outputSchema` keeps working after an upgrade. Set it to `false` to drop that repeated schema from `tools/list`. Results are always returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates. `find_name_days` still returns the people array as `data`, with `from`, `to`, and `calendar` beside it; those three fields are part of the output schema.
 
 `npm run measure:tools` prints tools/list size per profile (js-tiktoken `o200k_base`).
 
@@ -145,9 +145,9 @@ The image is read-only; `/vault` and `/state` are mounts. Change `read_only` in 
 
 `HealthService` reads `storage.inspectFiles()` once and reports type/folder mismatches, unknown or unrouted types, missing required frontmatter, invalid dates (`birth_date`, `name_day`, and the other registered date keys), tag casing and duplicates, broken wikilinks, accent-insensitive duplicate titles, orphans, alias collisions, index drift, and (when `neural.enabled`) sidecar revision drift via `GET /v1/ids`.
 
-The report is `${audit_dir}/health/latest.json` plus a dated history file. One audit event uses `operation: "health_check"` and the counts. Fixable issues become at most `health.max_changesets` dry-run changesets (about 50 operations each): a move or retype for a type/folder mismatch, a tag normalization update, or a relation-link repair. Nothing is applied. Index or sidecar drift adds `recommend_reindex`; reindex is not started.
+The report is `${audit_dir}/health/latest.json` plus a dated history file. One audit event uses `operation: "health_check"` and the counts. Fixable issues become at most `health.max_changesets` dry-run changesets (about 50 operations each). A move for a configured type in the wrong folder, a tag cleanup, and a relation-link repair for the same entity are kept together (the move comes first, because a rename does not change the revision). An unknown type is reported and is not moved onto the memory folder and not rewritten to `memory`. An exact alias such as `todo` → `task` is still offered as a retype. An identical prepared health changeset is reused instead of written again. Nothing is applied. Index or sidecar drift adds `recommend_reindex`; reindex is not started.
 
-`health.enabled` defaults to false. `health.interval_hours`, `startup_delay_s`, and `max_changesets` configure the timer. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval. The timer uses `setInterval().unref()`, a single-flight lock, and a small jitter, and it starts only from `serve` when `transport` is `http` (not stdio, not one-shot commands).
+`health.enabled` defaults to false. `interval_hours` is at least one minute and at most 8760 hours, in the file and in `MEMORY_HEALTH_INTERVAL_HOURS`. `startup_delay_s` and `max_changesets` configure the timer. The timer uses `setInterval().unref()`, a small jitter, and a lock file under `audit_dir/health` so a second process (CLI `health` beside `serve`) skips the run. It starts only from `serve` when `transport` is `http` (not stdio, not one-shot commands).
 
 - REST: `POST /api/v1/health/run` and `GET /api/v1/health/latest` (same bearer auth as the other `/api/v1` routes).
 - CLI: `health`.
