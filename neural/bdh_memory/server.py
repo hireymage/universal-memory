@@ -17,6 +17,7 @@ policy as the TypeScript server.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import math
 import os
@@ -32,7 +33,13 @@ from .model import DEFAULT_DECAY, DEFAULT_K, DEFAULT_NEURONS, DEFAULT_SEED, Asso
 from .store import StateStore
 from .vectors import DEFAULT_MODEL, SentenceEncoder, VectorIndex
 
-MAX_BODY = 64 * 1024 * 1024
+MAX_BODY = 16 * 1024 * 1024
+MAX_TEXT = 100_000
+MAX_QUERY = 2_000
+# The TypeScript client posts at most 40 entities per call
+# (REBUILD_CHUNK in src/adapters/neural/bdh-client.ts). The cap is a backstop
+# for a direct caller; the 16 MiB body limit is the memory bound.
+MAX_REBUILD = 1000
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -42,6 +49,7 @@ class MemoryApp:
         self.store = store
         self.token = token
         self.vectors = vectors
+        self.bind = "127.0.0.1"
         self.lock = threading.Lock()
 
     def health(self) -> dict[str, Any]:
@@ -58,7 +66,6 @@ class MemoryApp:
                 "entities": len(self.vectors) if self.vectors is not None else 0,
                 "dim": self.vectors.encoder.dim if self.vectors is not None else None,
             },
-            "state_dir": str(self.store.directory),
             "bdh": {
                 "hebbian_sigma": True,
                 "synaptic_readout": True,
@@ -90,6 +97,9 @@ def make_handler(app: MemoryApp) -> type[BaseHTTPRequestHandler]:
             return
 
         def do_GET(self) -> None:  # noqa: N802 — stdlib name
+            if not host_permitted(self, app.bind):
+                send_json(self, 403, {"ok": False, "error": {"code": "FORBIDDEN", "message": "Host is not allowed"}})
+                return
             path = urlparse(self.path).path
             if path == "/health":
                 send_json(self, 200, app.health())
@@ -103,6 +113,9 @@ def make_handler(app: MemoryApp) -> type[BaseHTTPRequestHandler]:
             send_json(self, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Unknown path"}})
 
         def do_POST(self) -> None:  # noqa: N802
+            if not host_permitted(self, app.bind):
+                send_json(self, 403, {"ok": False, "error": {"code": "FORBIDDEN", "message": "Host is not allowed"}})
+                return
             if not authorized(self, app.token):
                 send_json(self, 401, {"ok": False, "error": {"code": "AUTH_REQUIRED", "message": "Valid bearer token required"}})
                 return
@@ -142,9 +155,9 @@ def list_ids(app: MemoryApp) -> dict[str, Any]:
 def upsert(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
     entity_id = require_id(body)
     aliases = string_list(body.get("aliases"))
-    title = str(body.get("title") or "")
-    content = str(body.get("content") or "")
-    revision = str(body.get("revision") or "")
+    title = bounded_text(str(body.get("title") or ""), "title", 500)
+    content = bounded_text(str(body.get("content") or ""), "content")
+    revision = bounded_text(str(body.get("revision") or ""), "revision", 200)
     with app.lock:
         result = app.model.upsert(entity_id, title, aliases, content, revision)
         if not result["unchanged"]:
@@ -175,6 +188,8 @@ def associate(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
     query = body.get("query")
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query is required")
+    if len(query) > MAX_QUERY:
+        raise ValueError("query is too long")
     limit = body.get("limit", 10)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
         raise ValueError("limit must be an integer from 1 to 100")
@@ -198,28 +213,38 @@ def rebuild(app: MemoryApp, body: dict[str, Any]) -> dict[str, Any]:
     entities = body.get("entities")
     if not isinstance(entities, list):
         raise ValueError("entities must be a list")
+    if len(entities) > MAX_REBUILD:
+        raise ValueError(f"entities must contain at most {MAX_REBUILD} items")
     reset = body.get("reset", True)
     if not isinstance(reset, bool):
         raise ValueError("reset must be a boolean")
+    prepared = checked_entities(entities)
     with app.lock:
-        indexed = app.model.rebuild(entities, reset=reset)
+        indexed = app.model.rebuild(prepared, reset=reset)
         app.store.save(app.model)
         if app.vectors is not None:
             if reset:
                 app.vectors.clear()
-            app.vectors.upsert_many(
-                {
-                    "id": require_id(item),
-                    "title": str(item.get("title") or ""),
-                    "aliases": string_list(item.get("aliases")),
-                    "content": str(item.get("content") or ""),
-                    "revision": str(item.get("revision") or ""),
-                }
-                for item in entities
-                if isinstance(item, dict)
-            )
+            app.vectors.upsert_many(prepared)
             app.vectors.save()
     return {"ok": True, "indexed": indexed, "vectors_indexed": len(app.vectors) if app.vectors is not None else 0}
+
+
+def checked_entities(entities: list[Any]) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    for item in entities:
+        if not isinstance(item, dict):
+            continue
+        prepared.append(
+            {
+                "id": require_id(item),
+                "title": bounded_text(str(item.get("title") or ""), "title", 500),
+                "aliases": string_list(item.get("aliases")),
+                "content": bounded_text(str(item.get("content") or ""), "content"),
+                "revision": bounded_text(str(item.get("revision") or ""), "revision", 200),
+            }
+        )
+    return prepared
 
 
 def require_id(body: dict[str, Any]) -> str:
@@ -234,19 +259,60 @@ def string_list(value: Any) -> list[str]:
         return []
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("aliases must be a list of strings")
+    if any(len(item) > 200 for item in value):
+        raise ValueError("alias is too long")
     return [item for item in value if item][:32]
+
+
+def bounded_text(value: str, label: str, limit: int = MAX_TEXT) -> str:
+    if len(value) > limit:
+        raise ValueError(f"{label} is too long")
+    return value
 
 
 def authorized(handler: BaseHTTPRequestHandler, token: str) -> bool:
     if not token:
         return True
     header = handler.headers.get("Authorization", "")
-    return header == f"Bearer {token}"
+    # compare_digest on str rejects non-ASCII with TypeError. Bytes do not.
+    try:
+        got = header.encode("utf-8")
+        expected = f"Bearer {token}".encode("utf-8")
+    except (UnicodeError, AttributeError):
+        return False
+    if len(got) != len(expected):
+        return False
+    return hmac.compare_digest(got, expected)
+
+
+def host_permitted(handler: BaseHTTPRequestHandler, bind: str) -> bool:
+    """Loopback listeners reject a foreign Host so a browser cannot DNS-rebind onto them.
+
+    ``BDH_ALLOW_ANY_HOST=1`` disables the check for a local reverse proxy.
+    """
+    if os.environ.get("BDH_ALLOW_ANY_HOST", "") == "1":
+        return True
+    if bind not in LOOPBACK:
+        return True
+    return normalize_host(handler.headers.get("Host", "")) in LOOPBACK
+
+
+def normalize_host(value: str) -> str:
+    text = value.strip().lower()
+    if text.startswith("["):
+        end = text.find("]")
+        return text[1:end] if end > 1 else ""
+    if text.count(":") == 1:
+        return text.split(":", 1)[0]
+    return text
 
 
 def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
-    length = int(handler.headers.get("Content-Length", "0"))
-    if length < 0 or length > MAX_BODY:
+    raw_length = handler.headers.get("Content-Length", "0").strip()
+    if not raw_length.isdigit():
+        raise ValueError("Content-Length must be an integer")
+    length = int(raw_length)
+    if length > MAX_BODY:
         raise ValueError("request body is too large")
     raw = handler.rfile.read(length) if length else b""
     if not raw:
@@ -303,7 +369,10 @@ def min_score_from_env() -> float:
 
 
 def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
-    """Dense vector layer. Off unless BDH_VECTOR=1; the model must be present in the image or cache."""
+    """Dense vector layer. Off unless BDH_VECTOR=1; the model must be present in the image or cache.
+
+    Downloads stay off unless BDH_ALLOW_MODEL_DOWNLOAD=1 (see safety.configure_model_download).
+    """
     if os.environ.get("BDH_VECTOR", "0") != "1":
         return None
     encoder = SentenceEncoder(
@@ -317,6 +386,7 @@ def build_vectors_from_env(state_dir: Path) -> VectorIndex | None:
 
 
 def serve(bind: str, port: int, app: MemoryApp) -> ThreadingHTTPServer:
+    app.bind = bind
     if bind not in LOOPBACK and not app.token:
         raise SystemExit("refusing a non-loopback bind without a bearer token (set BDH_TOKEN or BDH_TOKEN_FILE)")
     server = ThreadingHTTPServer((bind, port), make_handler(app))

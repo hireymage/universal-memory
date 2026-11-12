@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Claim, EntityMetadata, Relation } from './types.js';
 import { MemoryError } from './errors.js';
+import { escapeRegExp, wikilinkAlias, wikilinkTarget } from './path-safety.js';
 
 /**
  * Deterministic id for a legacy `relationships` entry ({type, target_id} with
@@ -162,8 +163,11 @@ export function relationBulletLine(target: { title: string; path: string }, rela
   const parts = target.path.replace(/\.md$/, '').split('/');
   const name = parts[parts.length - 1] ?? '';
   // Folder notes are all called index.md; qualify them with the folder so the link is unambiguous.
-  const link = name === 'index' && parts.length > 1 ? `${parts[parts.length - 2]}/index` : name;
-  return `- [[${link}|${target.title}]] <!-- rel:${relationId} -->`;
+  const rawLink = name === 'index' && parts.length > 1 ? `${parts[parts.length - 2]}/index` : name;
+  const link = wikilinkTarget(rawLink) || 'note';
+  const title = wikilinkAlias(target.title) || link;
+  const marker = relationId.replace(/[^\w-]/g, '');
+  return `- [[${link}|${title}]] <!-- rel:${marker} -->`;
 }
 
 export function appendRelationLine(content: string, target: { title: string; path: string }, relationId: string): string {
@@ -178,7 +182,7 @@ export function appendRelationLine(content: string, target: { title: string; pat
 
 /** Remove every body line carrying the relation's marker; other wikilinks stay untouched. */
 export function removeRelationLines(content: string, relationId: string): { content: string; removed: number } {
-  const pattern = new RegExp(`^[^\\n]*<!--\\s*rel:${relationId}\\s*-->[^\\n]*\\n?`, 'gm');
+  const pattern = new RegExp(`^[^\\n]*<!--\\s*rel:${escapeRegExp(relationId)}\\s*-->[^\\n]*\\n?`, 'gm');
   const matched = content.match(pattern) ?? [];
   return { content: content.replace(pattern, ''), removed: matched.length };
 }

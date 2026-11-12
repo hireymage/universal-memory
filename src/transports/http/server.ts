@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import type { Request, Response, NextFunction } from 'express';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -6,16 +7,22 @@ import { createMemoryMcpServer } from '../mcp/server.js';
 import type { Services } from '../../composition.js';
 import { MemoryError } from '../../domain/errors.js';
 import type { CorrectClaimInput } from '../../application/graph-service.js';
+import { bearerMatches, createRateGate, httpGuardLists, loopbackBind, publicHttpError, requestsPerMinute } from './guards.js';
 
-const loopback=(host:string)=>['127.0.0.1','localhost','::1'].includes(host);
+const MAX_QUERY = 2_000;
 export function createHttpApp(s:Services){
- const allowedOrigins=s.config.http.allowed_origins.map(o=>{try{return new URL(o).hostname;}catch{return o;}});
- const app=createMcpExpressApp({host:s.config.http.bind,...(allowedOrigins.length?{allowedOrigins}:{}) ,jsonLimit:'1mb'});
+ const guards=httpGuardLists(s.config.http.bind, s.config.http.allowed_hosts ?? [], s.config.http.allowed_origins);
+ const app=createMcpExpressApp({host:s.config.http.bind, ...guards, jsonLimit:'1mb'});
  const token=process.env[s.config.http.bearer_token_env];
- if(!loopback(s.config.http.bind)&&!token)throw new Error(`Non-loopback HTTP bind requires bearer token in ${s.config.http.bearer_token_env}`);
- const auth=(req:Request,res:Response,next:NextFunction)=>{if(!token)return next();if(req.headers.authorization!==`Bearer ${token}`){res.status(401).json({ok:false,error:{code:'AUTH_REQUIRED',message:'Valid bearer token required'}});return;}next();};
+ if(!loopbackBind(s.config.http.bind)&&!token)throw new Error(`Non-loopback HTTP bind requires bearer token in ${s.config.http.bearer_token_env}`);
+ const auth=(req:Request,res:Response,next:NextFunction)=>{
+  const header=Array.isArray(req.headers.authorization)?req.headers.authorization[0]:req.headers.authorization;
+  if(bearerMatches(header, token ?? '')){next();return;}
+  res.status(401).json({ok:false,error:{code:'AUTH_REQUIRED',message:'Valid bearer token required'}});
+ };
+ const expensive=createRateGate(requestsPerMinute());
  app.get('/healthz',(_req,res)=>res.json({ok:true,name:s.config.name}));
- app.get('/readyz',async(_req,res)=>{try{await s.maintenance.inspect({kind:'vault'});res.json({ok:true});}catch(e){res.status(503).json({ok:false,error:String(e)});}});
+ app.get('/readyz',async(_req,res)=>{try{await stat(s.config.vault_root);res.json({ok:true});}catch{res.status(503).json({ok:false,error:{code:'NOT_READY',message:'Vault is not accessible'}});}});
  const mcp=createMcpHandler(()=>createMemoryMcpServer(s),{legacy:'stateless',responseMode:'auto',onerror:e=>process.stderr.write(`${e.message}\n`)});
  const nodeMcp=toNodeHandler(mcp);
  app.all('/mcp',auth,(req,res,next)=>{void nodeMcp(req,res,req.body).catch(next);});
@@ -24,7 +31,9 @@ export function createHttpApp(s:Services){
  app.get('/api/v1/search',auth,asyncRoute(async(req,res)=>{
   const limit=req.query.limit===undefined?undefined:Number(req.query.limit);
   if(limit!==undefined&&(!Number.isInteger(limit)||limit<=0))throw new MemoryError('VALIDATION_ERROR','limit must be a positive integer');
-  res.json(await s.memory.search({query:String(req.query.q??''),types:typeof req.query.type==='string'?[req.query.type]:undefined,limit}));
+  const query=String(req.query.q??'');
+  if(query.length>MAX_QUERY)throw new MemoryError('VALIDATION_ERROR','q is too long');
+  res.json(await s.memory.search({query,types:typeof req.query.type==='string'?[req.query.type]:undefined,limit}));
  }));
  app.get('/api/v1/associate',auth,asyncRoute(async(req,res)=>{
   const limit=req.query.limit===undefined?10:Number(req.query.limit);
@@ -33,11 +42,12 @@ export function createHttpApp(s:Services){
   if(mode!=='neural'&&mode!=='hybrid')throw new MemoryError('VALIDATION_ERROR','mode must be neural or hybrid');
   const query=String(req.query.q??'');
   if(!query)throw new MemoryError('VALIDATION_ERROR','q is required');
+  if(query.length>MAX_QUERY)throw new MemoryError('VALIDATION_ERROR','q is too long');
   res.json(await s.neuralMemory.associate(query,Math.min(limit,50),mode));
  }));
  app.get('/api/v1/people/birthdays',auth,asyncRoute(async(req,res)=>res.json(await s.people.birthdays(String(req.query.from),String(req.query.to)))));
- app.post('/api/v1/reindex',auth,asyncRoute(async(_req,res)=>res.json(await s.maintenance.reindex())));
- app.post('/api/v1/health/run',auth,asyncRoute(async(_req,res)=>res.json(await s.health.run())));
+ app.post('/api/v1/reindex',auth,asyncRoute(async(_req,res)=>{expensive();res.json(await s.maintenance.reindex());}));
+ app.post('/api/v1/health/run',auth,asyncRoute(async(_req,res)=>{expensive();res.json(await s.health.run());}));
  app.get('/api/v1/health/latest',auth,asyncRoute(async(_req,res)=>{const report=await s.health.latest();if(!report)throw new MemoryError('NOT_FOUND','No health report yet');res.json(report);}));
  app.get('/api/v1/external-files',auth,asyncRoute(async(req,res)=>{
   const maxContentChars=req.query.max_content_chars===undefined?undefined:Number(req.query.max_content_chars);
@@ -63,7 +73,7 @@ export function createHttpApp(s:Services){
   if(limit!==undefined&&(!Number.isInteger(limit)||limit<=0))throw new MemoryError('VALIDATION_ERROR','limit must be a positive integer');
   res.json(await s.graph.findSuspectClaims({source_id:String(req.query.source??''),predicate:typeof req.query.predicate==='string'?req.query.predicate:undefined,entity_id:typeof req.query.entity==='string'?req.query.entity:undefined,limit}));
  }));
- app.use((error:unknown,_req:Request,res:Response,_next:NextFunction)=>{const known=error instanceof MemoryError;res.status(known?error.code==='NOT_FOUND'?404:error.code==='CONFLICT'?409:error.code==='READ_ONLY'?403:400:500).json({ok:false,error:{code:known?error.code:'INTERNAL_ERROR',message:error instanceof Error?error.message:String(error)}});});
+ app.use((error:unknown,_req:Request,res:Response,_next:NextFunction)=>{if(!(error instanceof MemoryError))process.stderr.write(`${error instanceof Error?error.stack??error.message:String(error)}\n`);const body=publicHttpError(error);res.status(body.status).json({ok:false,error:{code:body.code,message:body.message}});});
  return app;
 }
 function asyncRoute(fn:(req:Request,res:Response)=>Promise<unknown>){return(req:Request,res:Response,next:NextFunction)=>{void fn(req,res).catch(next);};}

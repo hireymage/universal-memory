@@ -13,6 +13,7 @@ from pathlib import Path
 import torch
 
 from .model import AssociativeBDH
+from .safety import ensure_torch_load_allowed
 
 
 class StateStore:
@@ -24,6 +25,7 @@ class StateStore:
         return self.file.is_file()
 
     def load(self) -> dict[str, object]:
+        ensure_torch_load_allowed()
         payload = torch.load(self.file, map_location="cpu", weights_only=True)
         if not isinstance(payload, dict):
             raise ValueError("neural state file is not a dictionary")

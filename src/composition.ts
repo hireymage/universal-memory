@@ -16,7 +16,7 @@ import { NeuralMemoryService } from './application/neural-memory-service.js';
 import { HealthService } from './application/health-service.js';
 import type { NeuralAssociativeMemory } from './ports/neural.js';
 import type { SearchIndex } from './ports/index.js';
-import { resolveHealth, type AppConfig } from './config/schema.js';
+import { resolveFollowSymlinks, resolveHealth, type AppConfig } from './config/schema.js';
 
 export async function compose(config: AppConfig) {
   const inner = new InMemoryIndex();
@@ -33,7 +33,7 @@ export async function compose(config: AppConfig) {
   const index: SearchIndex = neural.enabled ? new MirroringIndex(inner, neural) : inner;
   const router = new StorageRouter(config.vault_root, config.routing);
   const audit = new FileAuditSink(config.audit_dir);
-  const storage = new MarkdownStorage(config.vault_root, router, index, config.read_only);
+  const storage = new MarkdownStorage(config.vault_root, router, index, config.read_only, resolveFollowSymlinks(config.follow_symlinks));
   const memory = new MemoryService(storage, index, audit, config.routing);
   const people = new PeopleService(memory, index);
   const projects = new ProjectService(memory);

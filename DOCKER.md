@@ -6,7 +6,7 @@ Universal Memory MCP zabalený do kontejneru.
 ## Soubory
 - `Dockerfile` – vícefázový build (Node 24): `deps` → `build` → `test` (vitest) → `runtime` (bez dev závislostí, uživatel 10001, healthcheck `/healthz`).
 - `docker-entrypoint.sh` – načte token ze souboru `MEMORY_API_TOKEN_FILE` (Docker secret), takže není vidět v `docker inspect`.
-- `config.docker.yml` – vault `/vault`, audit/changesety `/state/audit`, HTTP `0.0.0.0:27123`.
+- `config.docker.yml` – vault `/vault`, audit/changesety `/state/audit`, HTTP `0.0.0.0:27123` inside the container. Compose publishes that port on `127.0.0.1` unless `UMM_BIND` says otherwise.
 - `docker-compose.yml` + `.env.example` – vault jako bind mount, stav v pojmenovaném svazku, read-only kontejner, `cap_drop: ALL`.
 - `config.strata.yml` – varianta s interním portem 8080 (např. náhrada staršího serveru na stejném portu); připojuje se jako `/config/config.yml:ro`, v compose pak `ports: "8796:8080"` a `environment: UMM_HEALTH_PORT=8080` (jinak healthcheck testuje 27123 a kontejner hlásí `unhealthy`).
 

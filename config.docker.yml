@@ -6,6 +6,12 @@ read_only: false
 audit_dir: /state/audit
 transport: http
 http:
+  # 0.0.0.0 inside the container so the published port works. A bearer token
+  # is required. Browser Origin must be localhost unless allowed_origins lists
+  # the name. Host is not forced to localhost, so a LAN client is not rejected.
+  # Set allowed_hosts to restrict Host. MEMORY_HTTP_ALLOW_ANY_HOST=1 turns both
+  # checks off. The SDK prints a warning that Host is unrestricted; that is
+  # intentional. Compose publishes 127.0.0.1 by default.
   bind: 0.0.0.0
   port: 27123
   allowed_origins: []
