@@ -1,12 +1,12 @@
 # MCP tool contracts
 
-All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. Advertised input schemas omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time`, and the server still validates the real calendar. `outputSchema` is omitted unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is set. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). Every successful result is:
+All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. The schema advertised by tools/list is compact unless `verbose_schema` / `MEMORY_VERBOSE_SCHEMA` is set: unions are flattened, defaults are omitted, and the server still validates the original Zod schema (including real ISO dates). Both modes omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time`. `outputSchema` is omitted unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is set. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `standard`). `tool_discovery` / `MEMORY_TOOL_DISCOVERY` (`lazy` default, or `eager`) controls whether a `full` catalog lists every name up front or hides aliases, maintenance, agents, and neural behind `tool_groups`. Every successful compact result is JSON text `{"ok":true,"data":{...}}` with no `meta` and no `structuredContent`. `response` / `MEMORY_RESPONSE=full` restores the previous envelope:
 
 ```json
 {"ok":true,"data":{},"meta":{"api_version":"1","request_id":"uuid"}}
 ```
 
-Failures use `ok:false`, a stable `error.code`, message, optional details, and MCP `isError:true`. The same envelope is returned as `structuredContent` and serialized text for compatibility.
+Failures use `ok:false`, a stable `error.code`, message, optional details, and MCP `isError:true`. Compact failures are JSON text only. `MEMORY_RESPONSE=full` returns that envelope both as text and as `structuredContent`. Compact reads (`recall`, `get_entity`, `search_entities`, and the other entity lists) omit full frontmatter and clip long Markdown unless `detail: true`.
 
 ## Memory and generic entities
 

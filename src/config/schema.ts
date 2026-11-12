@@ -4,7 +4,7 @@ import YAML from 'yaml';
 import { z } from 'zod';
 import { DEFAULT_INBOX_CONFIDENCE_THRESHOLD } from '../domain/inbox-policy.js';
 import { DEFAULT_RANKING, type RankingConfig } from '../domain/ranking.js';
-import { resolveToolset } from '../transports/mcp/toolsets.js';
+import { resolveDiscovery, resolveToolset } from '../transports/mcp/toolsets.js';
 
 const routeSchema = z.object({ backend: z.string().default('markdown'), path: z.string().min(1) });
 const configSchema = z.object({
@@ -18,8 +18,26 @@ const configSchema = z.object({
    */
   follow_symlinks: z.boolean().optional(),
   audit_dir: z.string().default('./.state/audit'),
-  /** MCP catalog. Default `full` keeps every current tool name. `MEMORY_TOOLSET` overrides this. */
+  /** MCP catalog. Default `standard`. `full` keeps every historical tool name. `MEMORY_TOOLSET` overrides this. */
   toolset: z.enum(['minimal', 'standard', 'full']).optional(),
+  /**
+   * `lazy` (default) lists the standard tools when toolset is `full`, and
+   * `tool_groups` can enable the rest for a long-lived session. `eager` lists
+   * every tool in the toolset. `MEMORY_TOOL_DISCOVERY` overrides this.
+   */
+  tool_discovery: z.enum(['lazy', 'eager']).optional(),
+  /**
+   * Advertise the previous, larger JSON Schema (oneOf branches, defaults,
+   * additionalProperties, minLength). Off by default. `MEMORY_VERBOSE_SCHEMA` overrides this.
+   */
+  verbose_schema: z.boolean().optional(),
+  /**
+   * `compact` (default) drops nulls, empty values, echoed inputs, and full
+   * frontmatter, caps response size, and returns JSON once as text.
+   * `full` restores the previous envelope, entity bodies, and structuredContent.
+   * `MEMORY_RESPONSE` overrides this.
+   */
+  response: z.enum(['compact', 'full']).optional(),
   /**
    * Repeat the generic result envelope as each tool's `outputSchema`.
    * Off by default: the envelope is identical for every tool and dominates tools/list.
@@ -106,6 +124,9 @@ export async function loadConfig(file: string): Promise<AppConfig> {
     audit_dir: path.resolve(base, parsed.audit_dir),
     follow_symlinks: resolveFollowSymlinks(parsed.follow_symlinks),
     toolset: resolveToolset(parsed.toolset),
+    tool_discovery: resolveDiscovery(parsed.tool_discovery),
+    verbose_schema: resolveFlag('MEMORY_VERBOSE_SCHEMA', parsed.verbose_schema),
+    response: resolveResponse(parsed.response),
     advertise_output_schema: resolveOutputSchemaFlag(parsed.advertise_output_schema),
     health: resolveHealth(parsed.health),
     classification: resolveClassification(parsed.classification),
@@ -223,10 +244,27 @@ export function resolveFollowSymlinks(fromFile?: boolean, env: string | undefine
 
 /** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */
 export function resolveOutputSchemaFlag(fromFile: boolean | undefined, env: string | undefined = process.env.MEMORY_OUTPUT_SCHEMA): boolean {
+  return resolveFlag('MEMORY_OUTPUT_SCHEMA', fromFile, env);
+}
+
+/** Shared boolean env override. Unset or blank keeps the file value (default false). */
+export function resolveFlag(name: string, fromFile: boolean | undefined, env: string | undefined = process.env[name]): boolean {
   const override = env?.trim();
   if (!override) return fromFile ?? false;
   const normalized = override.toLowerCase();
   if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
   if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
-  throw new Error(`MEMORY_OUTPUT_SCHEMA must be true or false (got ${JSON.stringify(override)})`);
+  throw new Error(`${name} must be true or false (got ${JSON.stringify(override)})`);
+}
+
+export type ResponseMode = 'compact' | 'full';
+
+/** `MEMORY_RESPONSE` overrides the file. Unset or blank keeps the file value (default compact). */
+export function resolveResponse(fromFile: string | undefined, env: string | undefined = process.env.MEMORY_RESPONSE): ResponseMode {
+  const override = env?.trim();
+  const value = (override && override.length > 0 ? override : fromFile) ?? 'compact';
+  const normalized = value.toLowerCase();
+  if (normalized === 'compact' || normalized === 'full') return normalized;
+  const source = override && override.length > 0 ? 'MEMORY_RESPONSE' : 'response';
+  throw new Error(`${source} must be compact or full (got ${JSON.stringify(value)})`);
 }

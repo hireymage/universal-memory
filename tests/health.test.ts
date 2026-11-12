@@ -38,6 +38,7 @@ async function setup(extra: Partial<AppConfig> = {}) {
   await mkdir(vault, { recursive: true });
   const config: AppConfig = {
     name: 'Health Test', vault_root: vault, read_only: false, audit_dir: audit, transport: 'stdio',
+    toolset: 'full', tool_discovery: 'eager', response: 'full',
     http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'HEALTH_TEST_TOKEN' },
     routing, ...extra,
   };

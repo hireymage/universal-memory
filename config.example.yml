@@ -4,10 +4,15 @@ read_only: true
 # There is no SQL index. The search index is rebuilt in memory from Markdown.
 audit_dir: ./.state/audit
 transport: stdio
-# MCP catalog. full (default) keeps every current tool name.
-# minimal: everyday read/write. standard: minimal plus graph, claims, and sources.
-# Override without editing this file: MEMORY_TOOLSET=minimal|standard|full
-toolset: full
+# MCP catalog. Omitted means standard (everyday read/write plus graph, claims, and sources).
+# full keeps every historical tool name. lazy (default) hides full-only groups behind tool_groups.
+# MEMORY_TOOLSET=full and MEMORY_TOOL_DISCOVERY=eager list every tool on each request.
+# MEMORY_VERBOSE_SCHEMA=1 restores the previous JSON Schema shape.
+# MEMORY_RESPONSE=full restores full entities, meta, and structuredContent.
+toolset: standard
+# tool_discovery: lazy
+# verbose_schema: false
+# response: compact
 # Repeat the generic result envelope as outputSchema on every tool. Off saves a large
 # slice of tools/list. Override with MEMORY_OUTPUT_SCHEMA=true.
 advertise_output_schema: false
