@@ -26,6 +26,8 @@ export interface ParsedFindQuery {
   due?: DateWindow;
   /** Inclusive lower bound on `updated_at` (`YYYY-MM-DD`). */
   since?: string;
+  /** Type filters that are neither a registry id nor an alias. They do not match anything. */
+  unresolvedTypes: string[];
 }
 
 const FILTER_KEYS = new Map<string, 'type' | 'person' | 'project' | 'due' | 'since'>([
@@ -43,6 +45,7 @@ export function parseFindQuery(input: string, today = todayInPrague()): ParsedFi
   let project: string | undefined;
   let due: DateWindow | undefined;
   let since: string | undefined;
+  const unresolvedTypes: string[] = [];
   const text: string[] = [];
 
   const tokens = scanTokens(input);
@@ -61,7 +64,12 @@ export function parseFindQuery(input: string, today = todayInPrague()): ParsedFi
         if (key === 'type') {
           for (const part of value.split(',')) {
             const resolved = resolveType(part);
-            if (resolved && !types.includes(resolved)) types.push(resolved);
+            if (!resolved) continue;
+            if (resolved.unresolved) {
+              if (!unresolvedTypes.includes(resolved.unresolved)) unresolvedTypes.push(resolved.unresolved);
+              continue;
+            }
+            if (resolved.type && !types.includes(resolved.type)) types.push(resolved.type);
           }
         } else if (key === 'person') person = value;
         else if (key === 'project') project = value;
@@ -88,6 +96,7 @@ export function parseFindQuery(input: string, today = todayInPrague()): ParsedFi
     ...(project ? { project } : {}),
     ...(due ? { due } : {}),
     ...(since ? { since } : {}),
+    unresolvedTypes,
   };
 }
 
@@ -107,10 +116,16 @@ function absorbSpacedDate(token: string, tokens: string[], index: number, skip: 
   return token;
 }
 
-function resolveType(raw: string): string | undefined {
+/**
+ * Exact registry id or alias only. A near-miss such as `úkoly` is reported
+ * unresolved instead of being coerced by similarity or matched as a raw string.
+ */
+function resolveType(raw: string): { type: string; unresolved?: undefined } | { type?: undefined; unresolved: string } | undefined {
   const name = raw.trim();
   if (!name) return undefined;
-  return nearestKnownType(name)?.type ?? name;
+  const nearest = nearestKnownType(name);
+  if (nearest?.via === 'alias') return { type: nearest.type };
+  return { unresolved: name };
 }
 
 function dueWindow(value: string, today: string): DateWindow | undefined {

@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { UsageStore } from '../src/adapters/audit/usage-store.js';
 import { combinedRank, compareSchedule, DEFAULT_RANK_WEIGHTS, recencyScore, saturatingScore, scheduleOf } from '../src/domain/ranking.js';
 import { confidenceScore, parkLowConfidence } from '../src/domain/inbox-policy.js';
 import type { Entity } from '../src/domain/types.js';
@@ -36,6 +40,31 @@ describe('ranking', () => {
     expect(event).toMatchObject({ field: 'starts_at', overdue: false });
     expect(compareSchedule(upcoming, overdue)).toBeLessThan(0);
     expect(compareSchedule(overdue, undefined)).toBeLessThan(0);
+  });
+});
+
+describe('usage store', () => {
+  const roots: string[] = [];
+  afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+
+  it('keeps a corrupt file and counts overlapping bumps', async () => {
+    const brokenDir = await mkdtemp(path.join(os.tmpdir(), 'usage-broken-'));
+    roots.push(brokenDir);
+    await mkdir(brokenDir, { recursive: true });
+    const brokenFile = path.join(brokenDir, 'usage.json');
+    await writeFile(brokenFile, '{not json');
+    const broken = new UsageStore(brokenDir, true);
+    await broken.bump(['a']);
+    expect(await readFile(brokenFile, 'utf8')).toBe('{not json');
+    expect((await broken.countsFor(['a'])).get('a') ?? 0).toBe(0);
+
+    const freshDir = await mkdtemp(path.join(os.tmpdir(), 'usage-fresh-'));
+    roots.push(freshDir);
+    const fresh = new UsageStore(freshDir, true);
+    await Promise.all([fresh.bump(['a']), fresh.bump(['a']), fresh.bump(['b'])]);
+    const saved = JSON.parse(await readFile(path.join(freshDir, 'usage.json'), 'utf8')) as { counts: Record<string, number> };
+    expect(saved.counts.a).toBe(2);
+    expect(saved.counts.b).toBe(1);
   });
 });
 

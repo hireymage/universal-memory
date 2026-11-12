@@ -100,7 +100,7 @@ Filters inside the query are accent- and case-insensitive, in Czech or English:
 | due | `do:týden`, `due:week`, `due:2026-11-20` (tasks use `due`, events use `starts_at`) |
 | since | `od:2026-01-01`, `since:week` (lower bound on `updated`) |
 
-The default hit is `id`, `title`, `type`, `path`, a one-sentence `snippet`, `score`, and a short `reason`. `detail: true` adds revision, tags, and the score breakdown. `order: "due"` lists tasks and events upcoming first and sets `overdue: true` on past dates. Ten compact hits are meant to stay under about 1.5k tokens.
+The default hit is `id`, `title`, `type`, `path`, a one-sentence `snippet`, `score`, and a short `reason`. `detail: true` adds revision, tags, and the score breakdown. `order: "due"` lists tasks and events upcoming first and sets `overdue: true` on past dates; that order considers every dated match, not only the strongest 200 text hits. Archived entities are left out. `osoba:` / `projekt:` match whole words in the title, aliases, wikilinks, and those metadata fields, not a passing mention in the body. An unknown type such as `typ:úkoly` returns a warning and no hits. A blank query is rejected. Ten compact hits are meant to stay under about 1.5k tokens.
 
 `search_memory` keeps its three lists (`lexical`, `neural`, `vector`). The default snippet is one sentence and the neural payload omits the long note and per-hit snippets. `verbose: true` restores the previous long snippets. `order: "due"` is also accepted there and on `search_entities`.
 
@@ -120,7 +120,7 @@ On write, these frontmatter keys are renamed when the canonical key is absent or
 
 Advisory classification is unchanged: a confident create (no hint, score 1), `high` (0.9), and `medium` (0.6) keep the caller's type. `low` (0.3) is below the default threshold `classification.inbox_confidence_threshold` of 0.5, so the item is stored as `inbox` with `suggested_type`, `classification_confidence`, and `requested_type` in frontmatter. `MEMORY_INBOX_CONFIDENCE_THRESHOLD` overrides the file. A threshold of 0 parks nothing.
 
-`triage_inbox` (standard and full) lists those items. Pass `decisions: [{ id, expected_revision, type }]` to prepare a dry-run changeset. `apply_changeset` performs the retype, checks revisions, and audits. Nothing is deleted.
+`triage_inbox` (standard and full) lists non-archived inbox items. The page is taken after archived rows are removed. Pass `decisions: [{ id, expected_revision, type }]` to prepare a dry-run changeset. An exact alias such as `úkol` is stored as `task`. A type that is neither a registry entry nor a configured route is rejected before a changeset exists. Missing required fields are `warnings` on the response and diagnostics on the changeset; `apply_changeset` still performs the retype. Nothing is deleted.
 
 ## Advisory classification on create
 

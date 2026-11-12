@@ -30,7 +30,7 @@ Nové routy ve `config.example.yml`, `config.docker.yml` i ve výchozím registr
 
 ## Vyhledání, zápis, schránka
 
-`find` bere jeden dotaz. Filtry v textu jsou bez ohledu na háčky a velikost písmen: `typ:úkol` i `type:task`, `#znacka`, `osoba:`/`person:`, `projekt:`/`project:`, `do:týden`/`due:week`, `od:`/`since:`. Výchozí zásah je krátký (id, titulek, typ, cesta, věta, skóre, důvod). `detail: true` přidá metadata.
+`find` bere jeden dotaz. Filtry v textu jsou bez ohledu na háčky a velikost písmen: `typ:úkol` i `type:task`, `#znacka`, `osoba:`/`person:`, `projekt:`/`project:`, `do:týden`/`due:week`, `od:`/`since:`. `osoba:` a `projekt:` berou celé slovo v titulku, aliasech, wikilinku nebo příslušném poli, ne zmínku v textu. Archivované položky se nevrací. Neznámý typ (`typ:úkoly`) vrátí varování a žádný zásah. Výchozí zásah je krátký (id, titulek, typ, cesta, věta, skóre, důvod). `detail: true` přidá metadata.
 
 Při zápisu server vrací `warnings`. Chybějící `required` a špatné datum mají závažnost `error` jako kontrola zdraví, zápis ale neblokují. Synonyma klíčů (`deadline` → `due`, `narozeniny` → `birth_date`, `svatek` → `name_day`) se přejmenují a změna je v odpovědi i v auditu. Když se hodnota neshoduje, zůstanou oba klíče.
 

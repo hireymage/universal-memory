@@ -74,6 +74,8 @@ describe('find', () => {
       metadata: { due: past },
     });
     await services.memory.createWithDedup({ type: 'person', title: 'Jan Novák', content: 'Soused z domu naproti, má rád kávu a dlouhé rozhovory.' });
+    await services.memory.createWithDedup({ type: 'person', title: 'Janově', content: 'Obec, která se nesmí splést s osobou Jan jen proto, že název obsahuje stejná písmena.' });
+    await services.memory.createWithDedup({ type: 'note', title: 'Hovor', content: 'Domluveno s [[Jan Novák]] na pátek odpoledne v kanceláři.' });
     await services.memory.createWithDedup({ type: 'note', title: 'Kafka', content: 'Poznámka o clusteru, která nemá termín ani značku práce.' });
     await services.memory.create({
       type: 'note', title: 'Stará', content: 'Stará poznámka mimo okno od.',
@@ -93,7 +95,10 @@ describe('find', () => {
     expect(tagged.hits.map(hit => hit.title)).toEqual(['Koupit mléko']);
 
     const person = data<{ hits: Array<{ title: string; type: string }> }>(await client.callTool({ name: 'find', arguments: { query: 'osoba:Novak' } }));
-    expect(person.hits.map(hit => hit.title).sort()).toEqual(['Jan Novák', 'Koupit mléko']);
+    expect(person.hits.map(hit => hit.title).sort()).toEqual(['Hovor', 'Jan Novák']);
+    const firstName = data<{ hits: Array<{ title: string }> }>(await client.callTool({ name: 'find', arguments: { query: 'osoba:Jan' } }));
+    expect(firstName.hits.map(hit => hit.title)).not.toContain('Janově');
+    expect(firstName.hits.map(hit => hit.title)).toContain('Jan Novák');
 
     const week = data<{ hits: Array<{ title: string }> }>(await client.callTool({ name: 'find', arguments: { query: 'do:týden' } }));
     expect(week.hits.map(hit => hit.title)).toEqual(['Koupit mléko']);
@@ -116,6 +121,24 @@ describe('find', () => {
       await client.callTool({ name: 'find', arguments: { query: 'typ:ukol', detail: true, limit: 1 } }),
     );
     expect(detailed.hits[0]).toEqual(expect.objectContaining({ revision: expect.any(String), scores: expect.any(Object) }));
+
+    const archived = await services.memory.createWithDedup({
+      type: 'task', title: 'Archivovaný úkol', content: 'Koupit archiv, který se nemá vracet ani s textem ani bez něj.',
+      metadata: { due: near },
+    });
+    await services.memory.archive(archived.entity.metadata.id, archived.entity.revision);
+    const withoutText = data<{ hits: Array<{ title: string }> }>(await client.callTool({ name: 'find', arguments: { query: 'typ:úkol' } }));
+    const withText = data<{ hits: Array<{ title: string }> }>(await client.callTool({ name: 'find', arguments: { query: 'typ:úkol koupit' } }));
+    expect(withoutText.hits.map(hit => hit.title)).not.toContain('Archivovaný úkol');
+    expect(withText.hits.map(hit => hit.title)).not.toContain('Archivovaný úkol');
+
+    const unknown = data<{ hits: unknown[]; warnings?: Array<{ code: string }> }>(
+      await client.callTool({ name: 'find', arguments: { query: 'typ:úkoly' } }),
+    );
+    expect(unknown.hits).toEqual([]);
+    expect(unknown.warnings?.[0]?.code).toBe('UNKNOWN_TYPE');
+    const blank = await client.callTool({ name: 'find', arguments: { query: '   ' } });
+    expect(blank.isError).toBe(true);
     await client.close();
   });
 
@@ -148,6 +171,26 @@ describe('find', () => {
     const quietTokens = encoding.encode(JSON.stringify(quiet)).length;
     const loudTokens = encoding.encode(JSON.stringify(loud)).length;
     expect(quietTokens).toBeLessThan(loudTokens);
+    await client.close();
+  });
+});
+
+describe('find edge cases', () => {
+  it('keeps a weakly matching upcoming task when ordering by due', async () => {
+    const { services } = await setup();
+    const tomorrow = addDays(todayInPrague(), 1);
+    for (let index = 0; index < 200; index += 1) {
+      await services.memory.create({ type: 'note', title: `koupit ${index}`, content: 'Silná shoda v titulku, která by dřív obsadila celý limit 200.' });
+    }
+    await services.memory.create({
+      type: 'task', title: 'Zítra', content: 'Slabší shoda: koupit je jen v textu, termín je zítra.',
+      metadata: { due: tomorrow },
+    });
+    const client = await connect(services);
+    const ordered = data<{ hits: Array<{ title: string; type: string }> }>(
+      await client.callTool({ name: 'find', arguments: { query: 'koupit', order: 'due', limit: 5 } }),
+    );
+    expect(ordered.hits[0]).toMatchObject({ title: 'Zítra', type: 'task' });
     await client.close();
   });
 });
@@ -297,6 +340,70 @@ describe('low-confidence inbox', () => {
     });
     expect(result.isError).toBe(true);
     expect(await readFile(path.join(vault, parked.entity.path), 'utf8')).toBe(before);
+    await client.close();
+  });
+});
+
+describe('triage warnings', () => {
+  it('rejects an unknown type and reports missing required fields on the dry-run changeset', async () => {
+    const { services, vault } = await setup();
+    const parked = await services.memory.createWithDedup({
+      type: 'todo', title: 'Do schránky', content: 'Text je dost dlouhý na to, aby varování nebylo jen o krátkém obsahu položky.',
+    });
+    expect(parked.entity.metadata.type).toBe('inbox');
+    const before = await readFile(path.join(vault, parked.entity.path), 'utf8');
+    const client = await connect(services);
+    const unknown = await client.callTool({
+      name: 'triage_inbox',
+      arguments: { decisions: [{ id: parked.entity.metadata.id, expected_revision: parked.entity.revision, type: 'neexistuje' }] },
+    });
+    expect(unknown.isError).toBe(true);
+    expect(await readFile(path.join(vault, parked.entity.path), 'utf8')).toBe(before);
+
+    const prepared = data<{
+      warnings: Array<{ code: string; severity: string; field?: string }>;
+      changeset: { diagnostics: Array<{ code: string; severity: string }>; operations: Array<{ patch?: { metadata?: { type?: string } } }> };
+    }>(await client.callTool({
+      name: 'triage_inbox',
+      arguments: { decisions: [{ id: parked.entity.metadata.id, expected_revision: parked.entity.revision, type: 'úkol' }] },
+    }));
+    expect(prepared.changeset.operations[0]?.patch?.metadata?.type).toBe('task');
+    expect(prepared.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'TYPE_ALIAS', severity: 'info' }),
+      expect.objectContaining({ code: 'MISSING_FRONTMATTER', severity: 'warning', field: 'due' }),
+    ]));
+    expect(prepared.changeset.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MISSING_FRONTMATTER', severity: 'warning' }),
+    ]));
+    expect(await readFile(path.join(vault, parked.entity.path), 'utf8')).toBe(before);
+
+    const decision = await services.memory.createWithDedup({
+      type: 'todo', title: 'Rozhodnutí bez projektu', content: 'Další položka schránky, která nemá project_id a nemá se tiše přepsat.',
+    });
+    const strict = data<{ warnings: Array<{ code: string; severity: string; field?: string }> }>(await client.callTool({
+      name: 'triage_inbox',
+      arguments: { decisions: [{ id: decision.entity.metadata.id, expected_revision: decision.entity.revision, type: 'project_decision' }] },
+    }));
+    expect(strict.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MISSING_FRONTMATTER', severity: 'error', field: 'project_id' }),
+    ]));
+    await client.close();
+  });
+
+  it('returns a live inbox item when newer archived rows would fill the page', async () => {
+    const { services } = await setup();
+    const live = await services.memory.createWithDedup({
+      type: 'todo', title: 'Živá položka', content: 'Tahle má zůstat ve výpisu, i když novější archiv zaplní stránku.',
+    });
+    for (let index = 0; index < 3; index += 1) {
+      const archived = await services.memory.createWithDedup({
+        type: 'todo', title: `Archiv ${index}`, content: 'Archivovaná schránka, která nesmí vytlačit živou položku z první stránky.',
+      });
+      await services.memory.archive(archived.entity.metadata.id, archived.entity.revision);
+    }
+    const client = await connect(services);
+    const listed = data<{ items: Array<{ id: string }> }>(await client.callTool({ name: 'triage_inbox', arguments: { limit: 1 } }));
+    expect(listed.items.map(item => item.id)).toContain(live.entity.metadata.id);
     await client.close();
   });
 });
