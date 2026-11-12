@@ -118,7 +118,7 @@ Two protection rules hold everywhere:
 | `inspect_memory` | `{scope}` | inventory and diagnostics, read-only |
 | `validate_memory` | `{scope}` | validation diagnostics, read-only |
 | `find_broken_links` | `{scope}` | unresolved source/link records |
-| `find_duplicates` | `{scope}` | accent-stripped compact-title candidate groups (`Novák` with `Novak`), never merges |
+| `find_duplicates` | `{scope}` | compact-title candidate groups (`Novák` with `Novak`, and also `RTX 2070` with `rtx2070`), never merges |
 | `suggest_links` | `{scope,limit}` | shared-tag suggestions, never writes |
 | `scan_external_files` | `{scope,include_content?,max_content_chars?}` | unmanaged Markdown paths, hashes and optional bounded content; read-only |
 | `prepare_file_adoption` | `{path,expected_revision,entity_type,title,metadata?}` | dry-run changeset that preserves the file body and adds managed frontmatter in place |

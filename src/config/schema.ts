@@ -4,6 +4,11 @@ import YAML from 'yaml';
 import { z } from 'zod';
 import { resolveToolset } from '../transports/mcp/toolsets.js';
 
+/** One minute. A shorter health interval would rescan the vault in a tight loop. */
+export const MIN_HEALTH_INTERVAL_HOURS = 1 / 60;
+/** One year. The file schema and MEMORY_HEALTH_INTERVAL_HOURS share this ceiling. */
+export const MAX_HEALTH_INTERVAL_HOURS = 8_760;
+
 const routeSchema = z.object({ backend: z.string().default('markdown'), path: z.string().min(1) });
 const configSchema = z.object({
   name: z.string().default('Universal Memory MCP'),
@@ -34,7 +39,7 @@ const configSchema = z.object({
    */
   health: z.object({
     enabled: z.boolean().default(false),
-    interval_hours: z.number().positive().max(8_760).default(24),
+    interval_hours: z.number().min(MIN_HEALTH_INTERVAL_HOURS).max(MAX_HEALTH_INTERVAL_HOURS).default(24),
     startup_delay_s: z.number().int().min(0).max(86_400).default(60),
     max_changesets: z.number().int().min(0).max(100).default(5),
   }).optional(),
@@ -88,7 +93,7 @@ export const DEFAULT_HEALTH: HealthConfig = {
   max_changesets: 5,
 };
 
-/** File values win over the defaults. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval only. */
+/** File values win over the defaults. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval only, inside the same bounds as the file. */
 export function resolveHealth(
   fromFile?: Partial<HealthConfig> | null,
   env: string | undefined = process.env.MEMORY_HEALTH_INTERVAL_HOURS,
@@ -96,18 +101,22 @@ export function resolveHealth(
   const health: HealthConfig = { ...DEFAULT_HEALTH };
   if (fromFile) {
     if (fromFile.enabled !== undefined) health.enabled = fromFile.enabled;
-    if (fromFile.interval_hours !== undefined) health.interval_hours = fromFile.interval_hours;
+    if (fromFile.interval_hours !== undefined) health.interval_hours = assertHealthInterval(fromFile.interval_hours, 'health.interval_hours');
     if (fromFile.startup_delay_s !== undefined) health.startup_delay_s = fromFile.startup_delay_s;
     if (fromFile.max_changesets !== undefined) health.max_changesets = fromFile.max_changesets;
   }
   const override = env?.trim();
   if (!override) return health;
   const value = Number(override);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`MEMORY_HEALTH_INTERVAL_HOURS must be a positive number (got ${JSON.stringify(override)})`);
-  }
-  health.interval_hours = value;
+  health.interval_hours = assertHealthInterval(value, 'MEMORY_HEALTH_INTERVAL_HOURS');
   return health;
+}
+
+function assertHealthInterval(value: number, source: string): number {
+  if (!Number.isFinite(value) || value < MIN_HEALTH_INTERVAL_HOURS || value > MAX_HEALTH_INTERVAL_HOURS) {
+    throw new Error(`${source} must be a number of hours from ${MIN_HEALTH_INTERVAL_HOURS} (1 minute) to ${MAX_HEALTH_INTERVAL_HOURS} (got ${JSON.stringify(value)})`);
+  }
+  return value;
 }
 
 /** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */

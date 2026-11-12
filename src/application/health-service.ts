@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { ulid } from 'ulid';
 import type { AuditSink, EntityStorage, SearchIndex } from '../ports/index.js';
@@ -76,8 +76,9 @@ export interface HealthRunOptions {
 }
 
 interface Fix {
+  id: string;
   priority: number;
-  operation: ChangeOperation;
+  operations: ChangeOperation[];
 }
 
 const SEVERITY_RANK: Record<HealthFinding['severity'], number> = { error: 0, warning: 1, info: 2 };
@@ -127,13 +128,23 @@ export class HealthService {
     this.reportDir = path.join(auditDir, 'health');
   }
 
+  private get lockPath(): string {
+    return path.join(this.reportDir, '.lock');
+  }
+
   async run(options: HealthRunOptions = {}): Promise<HealthReport> {
     if (this.running) throw new MemoryError('CONFLICT', 'A health check is already running');
     this.running = true;
+    let lock: FileHandle | undefined;
     try {
+      lock = await this.acquireLock();
       return await this.execute(options);
     } finally {
       this.running = false;
+      if (lock) {
+        await lock.close().catch(() => undefined);
+        await unlink(this.lockPath).catch(() => undefined);
+      }
     }
   }
 
@@ -252,15 +263,25 @@ export class HealthService {
     sortFindings(findings);
     const counts = countFindings(findings);
     const recommend = findings.some(finding => finding.code === 'INDEX_DRIFT' || finding.code === 'SIDECAR_DRIFT');
-    const ranked = [...fixes.values()].sort((a, b) => a.priority - b.priority || String(a.operation.entity_id).localeCompare(String(b.operation.entity_id)));
-    const limited = ranked.slice(0, Math.max(0, maxChangesets) * Math.max(1, maxOps));
+    const groups = [...fixes.values()]
+      .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+      .map(orderedOperations)
+      .filter(operations => operations.length > 0);
+    const { slices, omitted } = chunkOperations(groups, Math.max(0, maxChangesets), Math.max(1, maxOps));
+    const preparedAlready = (await this.maintenance.listChangesets()).filter(changeset => changeset.status === 'prepared' && changeset.description.startsWith('Health check dry-run'));
     const changesets: HealthChangesetRef[] = [];
-    for (let index = 0; index < limited.length && changesets.length < maxChangesets; index += maxOps) {
-      const slice = limited.slice(index, index + maxOps);
+    for (const slice of slices) {
+      const fingerprint = operationFingerprint(slice);
+      const reused = preparedAlready.find(changeset => operationFingerprint(changeset.operations) === fingerprint);
+      if (reused) {
+        changesets.push({ id: reused.id, description: reused.description, operations: reused.operations.length });
+        continue;
+      }
       const prepared = await this.maintenance.prepare(
         `Health check dry-run (${slice.length} operations). Review and apply_changeset explicitly; nothing is applied automatically.`,
-        slice.map(item => item.operation),
+        slice,
       );
+      preparedAlready.push(prepared);
       changesets.push({ id: prepared.id, description: prepared.description, operations: prepared.operations.length });
     }
 
@@ -276,8 +297,8 @@ export class HealthService {
       counts,
       findings,
       changesets,
-      operations_proposed: ranked.length,
-      operations_omitted: ranked.length - limited.length,
+      operations_proposed: groups.reduce((sum, group) => sum + group.length, 0),
+      operations_omitted: omitted,
       recommend_reindex: recommend,
       recommendations: recommend ? ['reindex'] : [],
       audit_event_id: auditEventId,
@@ -380,21 +401,16 @@ export class HealthService {
         patch: { metadata: { type: next } },
       });
     };
+    // A configured type keeps its type and is offered a move into its own folder.
+    // An unrecognised type is only retyped when the name is an exact alias of a
+    // routed type (`todo` → `task`). It is never moved onto the memory fallback
+    // and never rewritten just because the current folder belongs to some other type.
     if (routed) {
       moveTo(routedPath);
       return;
     }
     const aliasTarget = other?.via === 'alias' && Object.prototype.hasOwnProperty.call(this.routes, other.type) ? other.type : undefined;
-    if (aliasTarget) {
-      retype(aliasTarget);
-      return;
-    }
-    const folderTypes = this.typesInDirectory(entity, directoryOf(entity.path));
-    if (folderTypes.length === 1 && folderTypes[0]) {
-      retype(folderTypes[0]);
-      return;
-    }
-    if (folderTypes.length === 0) moveTo(routedPath);
+    if (aliasTarget) retype(aliasTarget);
   }
 
   private proposeRelationRepair(entity: Entity, byId: Map<string, Entity>, findings: HealthFinding[], fixes: Map<string, Fix>): void {
@@ -501,21 +517,45 @@ export class HealthService {
     }
   }
 
-  private typesInDirectory(entity: Entity, directory: string): string[] {
-    const matches: string[] = [];
-    for (const type of Object.keys(this.routes)) {
-      try {
-        if (directoryOf(this.routePath(type, entity)) === directory) matches.push(type);
-      } catch { /* route needs metadata this entity does not have */ }
-    }
-    return matches;
-  }
-
   private routePath(type: string, entity: Entity): string {
     const decided = typeof entity.metadata.decided_at === 'string' ? new Date(entity.metadata.decided_at) : undefined;
     const created = new Date(String(entity.metadata.created_at ?? ''));
     const date = decided && !Number.isNaN(decided.getTime()) ? decided : (!Number.isNaN(created.getTime()) ? created : new Date());
     return this.router.route(type, entity.metadata.title, date, entity.metadata).relativePath;
+  }
+
+  private async acquireLock(): Promise<FileHandle> {
+    await mkdir(this.reportDir, { recursive: true });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const handle = await open(this.lockPath, 'wx');
+        await handle.writeFile(String(process.pid));
+        return handle;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (attempt === 0 && await this.lockIsStale()) {
+          await unlink(this.lockPath).catch(() => undefined);
+          continue;
+        }
+        throw new MemoryError('CONFLICT', 'A health check is already running');
+      }
+    }
+    throw new MemoryError('CONFLICT', 'A health check is already running');
+  }
+
+  private async lockIsStale(): Promise<boolean> {
+    try {
+      const pid = Number((await readFile(this.lockPath, 'utf8')).trim());
+      if (!Number.isInteger(pid) || pid <= 0) return true;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    } catch {
+      return true;
+    }
   }
 
   private async writeReport(report: HealthReport): Promise<void> {
@@ -528,9 +568,72 @@ export class HealthService {
 }
 
 function propose(fixes: Map<string, Fix>, id: string, priority: number, operation: ChangeOperation): void {
-  const existing = fixes.get(id);
-  if (existing && existing.priority <= priority) return;
-  fixes.set(id, { priority, operation });
+  const existing = fixes.get(id) ?? { id, priority, operations: [] };
+  existing.priority = Math.min(existing.priority, priority);
+  if (operation.kind === 'update') {
+    const update = existing.operations.find(item => item.kind === 'update');
+    if (update) mergeUpdate(update, operation);
+    else existing.operations.push(operation);
+  } else if (!existing.operations.some(item => item.kind === operation.kind)) {
+    existing.operations.push(operation);
+  }
+  fixes.set(id, existing);
+}
+
+/** Moves stay first: a rename does not change the revision, so a following update still matches. */
+function orderedOperations(fix: Fix): ChangeOperation[] {
+  const moves = fix.operations.filter(operation => operation.kind === 'move');
+  const updates = fix.operations.filter(operation => operation.kind !== 'move');
+  return [...moves, ...updates];
+}
+
+function mergeUpdate(target: ChangeOperation, extra: ChangeOperation): void {
+  const patch = target.patch ?? {};
+  const incoming = extra.patch ?? {};
+  target.patch = {
+    ...patch,
+    ...incoming,
+    ...(patch.metadata || incoming.metadata ? { metadata: { ...(patch.metadata ?? {}), ...(incoming.metadata ?? {}) } } : {}),
+  };
+}
+
+function chunkOperations(groups: ChangeOperation[][], maxChangesets: number, maxOps: number): { slices: ChangeOperation[][]; omitted: number } {
+  const slices: ChangeOperation[][] = [];
+  let current: ChangeOperation[] = [];
+  let omitted = 0;
+  const flush = () => {
+    if (!current.length || slices.length >= maxChangesets) return;
+    slices.push(current);
+    current = [];
+  };
+  for (const group of groups) {
+    if (slices.length >= maxChangesets) {
+      omitted += group.length;
+      continue;
+    }
+    if (current.length > 0 && current.length + group.length > maxOps) flush();
+    if (slices.length >= maxChangesets) {
+      omitted += group.length;
+      continue;
+    }
+    current = current.concat(group);
+    if (current.length >= maxOps) flush();
+  }
+  if (current.length) {
+    if (slices.length < maxChangesets) slices.push(current);
+    else omitted += current.length;
+  }
+  return { slices, omitted };
+}
+
+function operationFingerprint(operations: ChangeOperation[]): string {
+  return JSON.stringify(operations.map(operation => ({
+    kind: operation.kind,
+    entity_id: operation.entity_id ?? null,
+    expected_revision: operation.expected_revision ?? null,
+    destination: operation.destination ?? null,
+    patch: operation.patch ?? null,
+  })));
 }
 
 function blank(value: unknown): boolean {
