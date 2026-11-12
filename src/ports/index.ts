@@ -67,6 +67,8 @@ export interface SearchIndex {
   rebuild(entities: AsyncIterable<Entity>): Promise<{ indexed: number }>;
   upsert(entity: Entity): Promise<void>;
   remove(id: string): Promise<void>;
+  /** Id, path, and revision currently held by the disposable index. */
+  listEntries(): Promise<Array<{ id: string; path: string; revision: string }>>;
   search(query: SearchQuery): Promise<Entity[]>;
   findById(id: string): Promise<{ path: string; revision: string } | undefined>;
   backlinks(titleOrAlias: string): Promise<Entity[]>;
@@ -113,4 +115,5 @@ export interface AuditSink {
 export interface ChangesetStore {
   save(changeset: Changeset): Promise<void>;
   get(id: string): Promise<Changeset | undefined>;
+  list(): Promise<Changeset[]>;
 }

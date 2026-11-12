@@ -38,7 +38,7 @@ export interface DistillChunkResult {
 export const DISTILL_PROCEDURE: string[] = [
   '1. Read `text`. Note only facts, decisions, statuses and open items. Skip greetings and tool chatter, but keep short replies such as "ano" together with the question they answer.',
   '2. For each note, check `candidates`. If one of them is about the same subject, write the new fact into it with create_claim (entity_id = candidate.id, source_ids = [source_id]). Do not create a second entity for the same subject.',
-  '3. If no candidate fits, create one new note with remember (entity_type = "topic" or "decision"). In its body link related candidates as [[path without .md]] and cite the messages, for example "zdroj: msgs 24-26".',
+  '3. If no candidate fits, create one entity with remember. Use a routed entity_type: "fact" (durable fact), "decision" (decision), "topic" (subject note), "task" (open item), "idea" (idea), "preference" (like or dislike), or "event" (something at a date and time). These types have configured routes; do not invent an unrouted type. In the body link related candidates as [[path without .md]] and cite the messages, for example "zdroj: msgs 24-26".',
   '4. For every new note, create_relation from the new note to each linked candidate.',
   '5. Mark anything not verified as "neověřeno" in its value. Do not write guesses as facts.',
   '6. Store progress: continue with next_cursor until done = true. Keep the cursor you processed.',

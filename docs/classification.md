@@ -26,18 +26,30 @@ All fields except `confidence` are optional and only present when non-empty.
 
 ## Rule table (deterministic, first match wins)
 
+Patterns run on the accent-stripped title (`Nováková` → `novakova`) with Unicode
+letter boundaries `(?<!\p{L})…(?!\p{L})`. JavaScript `\b` is ASCII-only, even with
+the `u` flag, so a word ending in a diacritic (`Rozhodnutí`, and the same class of
+bug for `Poznámka` when the mark sits on a boundary) never used to match.
+
+| Order | Signal | Type hint |
+|---|---|---|
+| 1 | A date and a time (`2026-11-12 14:30`, `12. 11. 2026` + `14:30`) | `event` |
+| 2 | `mám rád` / `nemám rád` / `preferuji` / `prefer` (also feminine `ráda`) | `preference` |
+| 3 | `TODO`, `to-do`, `koupit`, `udělat`, `do pátku`, or a `- [ ]` checkbox | `task` |
+| 4 | `nápad` / `idea` | `idea` |
+| 5 | `decision` / `decided` / `rozhodnutí` | `decision` |
+| 6 | Kinship (including `maminka`, `tatínek`, `matka`, `otec`, `dcera`, `syn`, …) or `narozeniny` / `birthday` | `person` |
+| 7 | `note` / `notes` / `memo` / `poznámka` / `poznámky` | `note` |
+
 | Signal | Effect |
 |---|---|
-| Title matches `decision`/`decided`/`rozhodnutí` | type hint `decision` |
-| Title contains a kinship term (mother, father, wife, husband, son, daughter, brother, sister, bratr, sestra, mama, tata, grandmother, grandfather) | type hint `person` |
-| Title matches `note`/`notes`/`memo`/`poznámka`/`poznámky` | type hint `note` |
-| Chosen type is generic (`memory`) and a hint exists | `suggested_type` = hint |
-| Explicit type strongly mismatched (kinship → person; decision → decision) | `suggested_type` = hint |
-| Person (chosen or suggested) with family hint (kinship in title, `metadata.family: true`, or kinship `metadata.relation`) and no `metadata.member_of_collections` pinning | `suggested_collections: ["People/family"]` + routing note (flat person route vs `People/family/index.md`, collection-sync rule B) |
-| Chosen type has no configured route in `config.yml` | routing note about the silent fallback to the `memory` route |
+| Chosen type is loose (`memory`, `note`, `knowledge`, `inbox`) and a hint exists | `suggested_type` = hint |
+| Explicit type strongly mismatched (kinship → person; decision word → decision) | `suggested_type` = hint |
+| Person (chosen or suggested) with a kinship hint (`metadata.family: true`, kinship in the title, or kinship `metadata.relation`) and no `metadata.member_of_collections` pinning | `suggested_collections: ["People/family"]` + routing note. `narozeniny` alone does not pin the family collection |
+| Chosen type has no configured route | routing note about the silent fallback to the `memory` route, plus `suggested_type` set to the nearest registry type (exact alias, otherwise similarity) when one is close enough |
 
-Confidence: `high` when metadata and title corroborate the same hint; `low` when the
-type has no route at all; `medium` otherwise.
+Confidence: `high` when metadata and title corroborate the same kinship hint; `low` when the
+type has no route at all; `medium` otherwise. The draft is never mutated.
 
 ## What this is NOT
 

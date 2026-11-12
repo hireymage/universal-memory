@@ -1,4 +1,4 @@
-import type { NeuralAssociateResponse, NeuralAssociativeMemory, NeuralDocument, NeuralHealth, NeuralHit, NeuralRebuildResponse } from '../../ports/neural.js';
+import type { NeuralAssociateResponse, NeuralAssociativeMemory, NeuralDocument, NeuralHealth, NeuralHit, NeuralRebuildResponse, NeuralRevisionSnapshot } from '../../ports/neural.js';
 
 export interface BdhClientOptions {
   baseUrl: string;
@@ -70,6 +70,17 @@ export class BdhSidecarClient implements NeuralAssociativeMemory {
     return { enabled: true, available: true, entities: typeof response.body.entities === 'number' ? response.body.entities : undefined };
   }
 
+  async revisions(): Promise<NeuralRevisionSnapshot> {
+    const response = await this.post('/v1/ids', undefined, this.options.timeoutMs, 'GET');
+    if (!response.ok) return { available: false, warning: response.warning };
+    const bdh = revisionMap(response.body.bdh);
+    if (!bdh) return { available: false, warning: 'sidecar id map is missing' };
+    if (response.body.vector == null) return { available: true, bdh, vector: null };
+    const vector = revisionMap(response.body.vector);
+    if (!vector) return { available: false, warning: 'sidecar vector id map is malformed' };
+    return { available: true, bdh, vector };
+  }
+
   private async post(path: string, body: unknown, timeoutMs: number, method: 'GET' | 'POST' = 'POST'): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; warning: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -112,6 +123,9 @@ export class DisabledNeuralMemory implements NeuralAssociativeMemory {
   async health(): Promise<NeuralHealth> {
     return { enabled: false, available: false };
   }
+  async revisions(): Promise<NeuralRevisionSnapshot> {
+    return { available: false, warning: 'Neural associative memory is disabled' };
+  }
 }
 
 function endpoint(base: string, path: string): string {
@@ -143,6 +157,13 @@ function parseObject(text: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+function revisionMap(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const map: Record<string, string> = {};
+  for (const [id, revision] of Object.entries(value)) map[id] = revision == null ? '' : String(revision);
+  return map;
 }
 
 function readHit(value: unknown): NeuralHit[] {

@@ -134,6 +134,10 @@ routing:
 
 Paths are resolved under `vault_root`, normalized, and rejected if they escape it. Slugs are human-readable and collision-safe. Existing entities are found by stable ID through the rebuildable index, so manual rename/move does not change identity. A scan discovers all `.md` files, reparses metadata and links, and repairs index paths without rewriting files.
 
+An explicit `update_memory` (or any `memory.update`) whose patch changes `metadata.type` re-routes the file onto that type's configured path. The caller must pass `expected_revision`. The audit event for that update records `rerouted`, `from_type`, `to_type`, `from_path`, and `to_path` in addition to the before/after snapshots. Nothing else moves a file because a health check noticed the folder. The health check only prepares a dry-run changeset.
+
+Known types, their default routes, aliases, and required frontmatter live in `src/domain/entity-types.ts`. Config routing overrides the default path. A type with no route still falls back to the `memory` route; classification then suggests the nearest known type instead of only warning.
+
 ## 6. Markdown adapter and index
 
 Writes use a sibling temporary file, flush/close, then atomic rename. Before every update the adapter rereads the file and compares `expected_revision` against the SHA-256 revision of the current canonical bytes. A mismatch returns a typed conflict and writes nothing.

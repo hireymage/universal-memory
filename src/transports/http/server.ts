@@ -37,6 +37,8 @@ export function createHttpApp(s:Services){
  }));
  app.get('/api/v1/people/birthdays',auth,asyncRoute(async(req,res)=>res.json(await s.people.birthdays(String(req.query.from),String(req.query.to)))));
  app.post('/api/v1/reindex',auth,asyncRoute(async(_req,res)=>res.json(await s.maintenance.reindex())));
+ app.post('/api/v1/health/run',auth,asyncRoute(async(_req,res)=>res.json(await s.health.run())));
+ app.get('/api/v1/health/latest',auth,asyncRoute(async(_req,res)=>{const report=await s.health.latest();if(!report)throw new MemoryError('NOT_FOUND','No health report yet');res.json(report);}));
  app.get('/api/v1/external-files',auth,asyncRoute(async(req,res)=>{
   const maxContentChars=req.query.max_content_chars===undefined?undefined:Number(req.query.max_content_chars);
   if(maxContentChars!==undefined&&(!Number.isInteger(maxContentChars)||maxContentChars<=0))throw new MemoryError('VALIDATION_ERROR','max_content_chars must be a positive integer');

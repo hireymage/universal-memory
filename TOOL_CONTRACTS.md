@@ -118,7 +118,7 @@ Two protection rules hold everywhere:
 | `inspect_memory` | `{scope}` | inventory and diagnostics, read-only |
 | `validate_memory` | `{scope}` | validation diagnostics, read-only |
 | `find_broken_links` | `{scope}` | unresolved source/link records |
-| `find_duplicates` | `{scope}` | exact normalized-title candidate groups, never merges |
+| `find_duplicates` | `{scope}` | compact-title candidate groups (`Novák` with `Novak`, and also `RTX 2070` with `rtx2070`), never merges |
 | `suggest_links` | `{scope,limit}` | shared-tag suggestions, never writes |
 | `scan_external_files` | `{scope,include_content?,max_content_chars?}` | unmanaged Markdown paths, hashes and optional bounded content; read-only |
 | `prepare_file_adoption` | `{path,expected_revision,entity_type,title,metadata?}` | dry-run changeset that preserves the file body and adds managed frontmatter in place |
@@ -127,6 +127,8 @@ Two protection rules hold everywhere:
 | `migrate_schema` | `{target_version,scope}` | dry-run changeset only |
 | `repair_relation_links` | `{scope?}` | dry-run changeset only | Rewrites legacy `- [[Title]] <!-- rel:ID -->` bullets to `- [[basename|Title]] <!-- rel:ID -->` so Obsidian resolves them. One-time migration for vaults written before this change; apply with `apply_changeset`. Reindex only if the neural sidecar was down during apply. Idempotent. |
 | `reindex` | `{}` | rebuilt derived index counts |
+| `health_report` | `{detail?:false,page?,page_size?}` | latest report summary. Default is compact: `last_run_at`, counts by severity and code, top 5 findings, changeset ids. `detail:true` pages findings. Read-only; on `minimal`, `standard`, and `full` |
+| `run_health_check` | `{}` | runs one health pass and returns the compact summary. Writes the report and dry-run changesets under `audit_dir` only. Does not modify the vault, apply changesets, or reindex. On `full` only. Allowed while `read_only`, same as `prepare_normalization` |
 | `audit_history` | `{action:"list",entity_id?,limit}` or `{action:"prepare_rollback",event_id}` | events or inverse dry-run changeset |
 
 Scopes are a tagged union: `file`, `folder`, `entity_type`, `project`, `changed_since`, or `vault`. Scope filtering is applied before inspection, link checks, duplicate/link suggestions, and migrations. Project scope includes the project entity and entities carrying its stable ID in `projects` metadata.

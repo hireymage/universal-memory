@@ -44,4 +44,15 @@ export class FileChangesetStore implements ChangesetStore {
   constructor(private readonly root: string) {}
   async save(changeset: Changeset): Promise<void> { await mkdir(this.root,{recursive:true}); await writeFile(path.join(this.root,`${changeset.id}.json`),JSON.stringify(changeset,null,2),{mode:0o600}); }
   async get(id: string): Promise<Changeset|undefined> { try{return JSON.parse(await readFile(path.join(this.root,`${id}.json`),'utf8')) as Changeset;}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw e;} }
+  async list(): Promise<Changeset[]> {
+    let names: string[] = [];
+    try { names = await readdir(this.root); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const changesets: Changeset[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json') || name.startsWith('.')) continue;
+      const changeset = await this.get(name.slice(0, -'.json'.length));
+      if (changeset) changesets.push(changeset);
+    }
+    return changesets;
+  }
 }

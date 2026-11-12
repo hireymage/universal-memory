@@ -37,6 +37,14 @@ export interface NeuralHealth {
   warning?: string;
 }
 
+/** Id → revision for the sidecar layers. `vector` is null when that layer is off. */
+export interface NeuralRevisionSnapshot {
+  available: boolean;
+  bdh?: Record<string, string>;
+  vector?: Record<string, string> | null;
+  warning?: string;
+}
+
 export interface NeuralAssociativeMemory {
   readonly enabled: boolean;
   upsert(document: NeuralDocument): Promise<void>;
@@ -44,4 +52,6 @@ export interface NeuralAssociativeMemory {
   associate(query: string, limit: number): Promise<NeuralAssociateResponse>;
   rebuild(documents: NeuralDocument[]): Promise<NeuralRebuildResponse>;
   health(): Promise<NeuralHealth>;
+  /** Revision map for drift checks. Must not throw; an outage is `available: false`. */
+  revisions(): Promise<NeuralRevisionSnapshot>;
 }

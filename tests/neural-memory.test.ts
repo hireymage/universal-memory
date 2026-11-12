@@ -47,6 +47,7 @@ function fakeNeural(impl: Partial<NeuralAssociativeMemory> & { enabled?: boolean
     associate: impl.associate ?? (async () => ({ available: true, results: [] })),
     rebuild: impl.rebuild ?? (async documents => { docs.splice(0, docs.length, ...documents); return { available: true, indexed: documents.length }; }),
     health: impl.health ?? (async () => ({ enabled: true, available: true, entities: docs.length })),
+    revisions: impl.revisions ?? (async () => ({ available: true, bdh: {}, vector: null })),
   };
 }
 
@@ -212,6 +213,11 @@ describe('BDH adapter', () => {
           res.end(JSON.stringify({ ok: true, entities: 2, device: 'cpu' }));
           return;
         }
+        if (req.url === '/v1/ids' && req.method === 'GET') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, bdh: { gift: 'rev-1' }, vector: null }));
+          return;
+        }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, indexed: 2, removed: true }));
       });
@@ -225,6 +231,7 @@ describe('BDH adapter', () => {
     const health = await client.health();
     expect(health.available).toBe(true);
     expect(health.entities).toBe(2);
+    await expect(client.revisions()).resolves.toEqual({ available: true, bdh: { gift: 'rev-1' }, vector: null });
     const associated = await client.associate('Comandante', 5);
     expect(associated).toEqual({ available: true, results: [{ id: 'gift', score: 0.44 }], vectorAvailable: false, vectorResults: [] });
     const scored = new BdhSidecarClient({ baseUrl: `http://127.0.0.1:${address.port}`, timeoutMs: 1000, vectorMinScore: 0.25 });

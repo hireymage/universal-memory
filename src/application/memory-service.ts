@@ -126,7 +126,10 @@ export class MemoryService {
     assertPatchAllowed(patch);
     const before = await this.get(id);
     const after = await this.storage.update(id, patch, expectedRevision);
-    await this.record('update', before, after, client);
+    // A type change re-routes the file inside storage.update. That move is
+    // explicit (the caller passed expected_revision) and is recorded on the
+    // audit event, not only in the before/after snapshots.
+    await this.record('update', before, after, client, rerouteDetails(before, after));
     return after;
   }
   async move(id: string, destination: string, expectedRevision: string, client?: string): Promise<Entity> {
@@ -191,6 +194,17 @@ export class MemoryService {
 const sourceNormalize = (value: string): string => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const sourceStopWords = new Set(['informace', 'potrebuji', 'potreboval', 'chci', 'prosim', 'najdi', 'hledej', 'neco', 'vse', 'vsechno', 'ohledne', 'kolik', 'mam', 'ma', 'mas', 'mame', 'mate', 'jsou', 'je', 'jak', 'kdy', 'kdo', 'co', 'ktery', 'kterou', 'kterem', 'mi', 'me', 'moje', 'muj', 'moji', 'nase', 'about', 'find', 'show', 'tell', 'what', 'when', 'who', 'how', 'the', 'and']);
 const sourceRelationshipTerms: Record<string, string[]> = { dite: ['deti', 'syn', 'dcera', 'child', 'children'], deti: ['dite', 'syn', 'dcera', 'child', 'children'], children: ['child', 'deti', 'syn', 'dcera'], child: ['children', 'dite', 'deti', 'syn', 'dcera'] };
+function rerouteDetails(before: Entity, after: Entity): Record<string, unknown> | undefined {
+  if (before.metadata.type === after.metadata.type && before.path === after.path) return undefined;
+  return {
+    rerouted: before.path !== after.path,
+    from_type: before.metadata.type,
+    to_type: after.metadata.type,
+    from_path: before.path,
+    to_path: after.path,
+  };
+}
+
 function sourceTokens(query?: string): string[] {
   const tokens = sourceNormalize(query ?? '').split(/\s+/).filter(token => token.length >= 2 && !sourceStopWords.has(token));
   return [...new Set(tokens.flatMap(token => [token, ...(sourceRelationshipTerms[token] ?? [])]))];

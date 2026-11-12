@@ -5,17 +5,21 @@ import { compose } from './composition.js';
 import { createMemoryMcpServer } from './transports/mcp/server.js';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { createHttpApp } from './transports/http/server.js';
+import { startHealthScheduler } from './application/health-schedule.js';
 
 const program=new Command().name('universal-memory-mcp').option('-c, --config <path>','configuration file',process.env.MEMORY_CONFIG??'config.yml');
 program.command('serve').description('Serve configured MCP transport and REST API when using HTTP').action(async()=>{
  const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose(config);
  if(config.transport==='stdio'){serveStdio(()=>createMemoryMcpServer(services),{legacy:'serve',onerror:e=>process.stderr.write(`${e.stack??e.message}\n`)});return;}
- const app=createHttpApp(services);app.listen(config.http.port,config.http.bind,()=>{
+ const app=createHttpApp(services);
+ startHealthScheduler(()=>services.health.run(), config);
+ app.listen(config.http.port,config.http.bind,()=>{
   process.stderr.write(`${config.name} listening on http://${config.http.bind}:${config.http.port}\n`);
   void services.maintenance.reindex().catch(error=>process.stderr.write(`Initial reindex failed: ${error instanceof Error?error.stack??error.message:String(error)}\n`));
  });
 });
 program.command('inspect').description('Read-only vault inspection report').action(async()=>{const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose({...config,read_only:true});console.log(JSON.stringify(await services.maintenance.inspect({kind:'vault'}),null,2));});
+program.command('health').description('Run one vault health check. Writes a report and dry-run changesets under audit_dir. Does not modify the vault or apply changesets.').action(async()=>{const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose(config);console.log(JSON.stringify(await services.health.run(),null,2));});
 program.command('reindex').description('Rebuild disposable index from Markdown').action(async()=>{const config=await loadConfig(program.opts<{config:string}>().config);const services=await compose(config);console.log(JSON.stringify(await services.maintenance.reindex(),null,2));});
 // Commander passes the positional <path> first, then options; the old handler read it from the options object.
 const exportSummary=(file:string,conversations:Array<{id:string;title:string;createdUtc:string;updatedUtc:string;messages:unknown[]}>)=>JSON.stringify({file,conversation_count:conversations.length,conversations:conversations.map(c=>({id:c.id,title:c.title,created:c.createdUtc,updated:c.updatedUtc,message_count:c.messages.length}))},null,2);

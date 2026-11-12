@@ -18,6 +18,7 @@ export const MINIMAL_TOOLS = [
   'search_people',
   'find_name_days',
   'resolve_entity',
+  'health_report',
 ] as const;
 
 /**
