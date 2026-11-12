@@ -8,9 +8,9 @@ transport: stdio
 # minimal: everyday read/write. standard: minimal plus graph, claims, and sources.
 # Override without editing this file: MEMORY_TOOLSET=minimal|standard|full
 toolset: full
-# Repeat the generic result envelope as outputSchema on every tool. Off saves a large
-# slice of tools/list. Override with MEMORY_OUTPUT_SCHEMA=true.
-advertise_output_schema: false
+# Repeat the generic result envelope as outputSchema. On by default.
+# Set false (or MEMORY_OUTPUT_SCHEMA=false) to shrink tools/list.
+advertise_output_schema: true
 http:
   bind: 127.0.0.1
   port: 3333

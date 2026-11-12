@@ -14,8 +14,8 @@ const configSchema = z.object({
   toolset: z.enum(['minimal', 'standard', 'full']).optional(),
   /**
    * Repeat the generic result envelope as each tool's `outputSchema`.
-   * Off by default: the envelope is identical for every tool and dominates tools/list.
-   * `MEMORY_OUTPUT_SCHEMA` overrides this.
+   * On by default so clients that validate tool output keep working.
+   * Set false (or `MEMORY_OUTPUT_SCHEMA=false`) to drop it from tools/list.
    */
   advertise_output_schema: z.boolean().optional(),
   transport: z.enum(['stdio', 'http']).default('stdio'),
@@ -61,10 +61,10 @@ export async function loadConfig(file: string): Promise<AppConfig> {
   };
 }
 
-/** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */
+/** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default true). */
 export function resolveOutputSchemaFlag(fromFile: boolean | undefined, env: string | undefined = process.env.MEMORY_OUTPUT_SCHEMA): boolean {
   const override = env?.trim();
-  if (!override) return fromFile ?? false;
+  if (!override) return fromFile ?? true;
   const normalized = override.toLowerCase();
   if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
   if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;

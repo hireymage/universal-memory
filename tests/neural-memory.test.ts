@@ -227,6 +227,10 @@ describe('BDH adapter', () => {
     expect(health.entities).toBe(2);
     const associated = await client.associate('Comandante', 5);
     expect(associated).toEqual({ available: true, results: [{ id: 'gift', score: 0.44 }], vectorAvailable: false, vectorResults: [] });
+    const scored = new BdhSidecarClient({ baseUrl: `http://127.0.0.1:${address.port}`, timeoutMs: 1000, vectorMinScore: 0.25 });
+    await scored.associate('floor', 4);
+    const sent = requests.find(item => item.url === '/v1/associate' && (item.body as { query?: string } | undefined)?.query === 'floor')?.body as { min_score?: number; limit?: number };
+    expect(sent).toMatchObject({ query: 'floor', limit: 4, min_score: 0.25 });
     expect(requests.some(item => item.authorization === 'Bearer secret')).toBe(true);
     const rebuilt = await client.rebuild([
       { id: 'a', title: 'A', aliases: [], content: 'one' },
@@ -277,6 +281,55 @@ describe('BDH adapter', () => {
     expect(call.structuredContent?.ok).toBe(true);
     expect(call.structuredContent?.data.advisory).toBe(true);
     expect(call.structuredContent?.data.enabled).toBe(false);
+  });
+
+  it('wires neural.vector_min_score through compose into the sidecar request and the result filter', async () => {
+    const requests: Array<{ url?: string; body?: { id?: string; query?: string; min_score?: number } }> = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(chunk as Buffer));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        const body = raw ? JSON.parse(raw) as { id?: string; query?: string; min_score?: number } : undefined;
+        requests.push({ url: req.url, body });
+        if (req.url === '/v1/associate') {
+          const strong = requests.find(item => item.url === '/v1/upsert' && item.body?.id)?.body?.id;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            results: [],
+            vector_available: true,
+            vector_results: [
+              { id: strong, score: 0.9 },
+              { id: strong, score: 0.1 },
+              { id: 'missing-from-index', score: 0.99 },
+            ],
+          }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, unchanged: false, indexed: 1 }));
+      });
+    });
+    await listen(server);
+    cleanup.push(() => close(server));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
+    const root = await mkdtemp(path.join(os.tmpdir(), 'memory-neural-floor-'));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    await mkdir(path.join(root, 'vault'));
+    const services = await compose({
+      name: 'Neural floor', vault_root: path.join(root, 'vault'), read_only: false,
+      audit_dir: path.join(root, 'audit'), transport: 'stdio',
+      http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'UNSET_TEST_TOKEN' },
+      routing,
+      neural: { enabled: true, base_url: `http://127.0.0.1:${address.port}`, bearer_token_env: 'UNSET_TEST_TOKEN', timeout_ms: 1000, vector_min_score: 0.25 },
+    });
+    const created = await services.memory.create({ type: 'note', title: 'Kept', content: 'above the floor' });
+    const out = await services.neuralMemory.associate('floor', 5, 'neural');
+    const sent = requests.find(item => item.url === '/v1/associate')?.body;
+    expect(sent?.min_score).toBe(0.25);
+    expect(out.vector_results.map(hit => ({ id: hit.id, score: hit.score }))).toEqual([{ id: created.metadata.id, score: 0.9 }]);
   });
 
   it('parses config with the neural block omitted and with it enabled', async () => {

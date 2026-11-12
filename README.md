@@ -26,7 +26,7 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 
 `standard` can prepare a merge changeset, but `apply_changeset` is maintenance and stays on `full`. The safety model does not change with the profile: `read_only` still defaults to true, writes still require `expected_revision`, nothing is deleted, and maintenance is still dry-run then `apply_changeset`.
 
-`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the same result envelope on every tool. It is off by default. Results are still returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates.
+`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the result envelope on every tool. It stays **on** by default, so a client that validates `outputSchema` keeps working after an upgrade. Set it to `false` to drop that repeated schema from `tools/list`. Results are always returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates. `find_name_days` still returns the people array as `data`, with `from`, `to`, and `calendar` beside it; those three fields are part of the output schema.
 
 `npm run measure:tools` prints tools/list size per profile (js-tiktoken `o200k_base`).
 

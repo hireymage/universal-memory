@@ -1,6 +1,6 @@
 # MCP tool contracts
 
-All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. Advertised input schemas omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time`, and the server still validates the real calendar. `outputSchema` is omitted unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is set. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). Every successful result is:
+All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. Advertised input schemas omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time`, and the server still validates the real calendar. `outputSchema` is advertised unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is false. The envelope allows optional `from`, `to`, and `calendar` so `find_name_days` can keep those fields beside `data`. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). Every successful result is:
 
 ```json
 {"ok":true,"data":{},"meta":{"api_version":"1","request_id":"uuid"}}
@@ -37,7 +37,7 @@ Domain tools use a discriminating `action` enum, which gives small models one un
 
 `link_entity_to_project` is represented by `link_entities` with the project as source or target. This prevents two implementations of relationship behavior. Older convenience names can be added later as aliases without changing semantics.
 
-`find_name_days` returns `{people, from, to, calendar}` inside `data`. `from`, `to`, and `calendar` are not siblings of `data`.
+`find_name_days` returns the matching people as `data` (an array) and `from`, `to`, and `calendar` next to it, the same fields as before.
 
 ## Agent profiles
 
