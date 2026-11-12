@@ -7,7 +7,7 @@ import { MemoryService } from './memory-service.js';
 import { GraphService } from './graph-service.js';
 import { claimKey, legacyRelationId, normalizeClaims, relationIdentity, structuredRelations } from '../domain/model.js';
 import { compactForm } from '../domain/similarity.js';
-import { escapeRegExp, wikilinkLabel } from '../domain/path-safety.js';
+import { escapeRegExp, wikilinkTarget } from '../domain/path-safety.js';
 
 export class MaintenanceService{
  constructor(private readonly storage:EntityStorage,private readonly index:SearchIndex,private readonly changesets:ChangesetStore,private readonly memory:MemoryService,private readonly audit:AuditSink){}
@@ -141,7 +141,7 @@ export class MaintenanceService{
    for await(const entity of this.storage.scan()){
      if(entity.metadata.id===source.metadata.id||entity.metadata.id===target.metadata.id)continue;
      let content=entity.content;let changed=false;
-     const safeTitle=wikilinkLabel(target.metadata.title)||'untitled';
+     const safeTitle=wikilinkTarget(target.metadata.title)||'untitled';
      for(const identifier of identifiers)for(const flags of ['', 'i']){const rewritten=content.replace(new RegExp(`\\[\\[\\s*${escapeRegExp(identifier)}([\\]|#]{1,2})`,'g'+flags),(_match,suffix:string)=>`[[${safeTitle}${suffix}`);if(rewritten!==content){content=rewritten;changed=true;break;}}
      const metadata:EntityMetadata={...entity.metadata};
      const relations=structuredRelations(entity.metadata);const legacy=Array.isArray(entity.metadata.relationships)?entity.metadata.relationships:[];

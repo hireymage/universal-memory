@@ -32,13 +32,16 @@ def _raw(
     host: str | None = None,
     body: bytes | None = None,
     token: str | None = None,
+    authorization: str | None = None,
     content_length: str | None = None,
 ) -> tuple[int, dict]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
         connection.putrequest(method, path, skip_host=True)
         connection.putheader("Host", host or f"127.0.0.1:{port}")
-        if token is not None:
+        if authorization is not None:
+            connection.putheader("Authorization", authorization)
+        elif token is not None:
             connection.putheader("Authorization", f"Bearer {token}")
         payload = body or b""
         if content_length is not None:
@@ -192,6 +195,17 @@ class InputLimitsTest(unittest.TestCase):
         status, bad = _raw(self.port, "POST", "/v1/upsert", body=b"{}", token="test-token", content_length="nope")
         self.assertEqual(status, 400)
         self.assertIn("Content-Length", bad["error"]["message"])
+
+    def test_non_ascii_authorization_is_unauthorized(self) -> None:
+        status, body = _raw(
+            self.port,
+            "POST",
+            "/v1/associate",
+            body=b'{"query":"hi"}',
+            authorization="Bearer test-tok\u00e9",
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(body["error"]["code"], "AUTH_REQUIRED")
 
 
 class HandlerFactorySmokeTest(unittest.TestCase):
