@@ -154,6 +154,37 @@ class SidecarApiTest(unittest.TestCase):
         self.assertEqual(with_vectors["vector"], {"bridge": "vec-1"})
         self.assertNotIn("secret", json.dumps(with_vectors))
 
+    def test_ids_reads_revisions_off_a_real_vector_index(self) -> None:
+        import torch
+        from bdh_memory.vectors import VectorIndex
+
+        class Encoder:
+            dim = 4
+
+            def encode(self, texts):
+                rows = [torch.ones(self.dim) for _ in texts]
+                return torch.stack(rows) if rows else torch.zeros((0, self.dim))
+
+        index = VectorIndex(Encoder(), Path(self.tmp.name) / "vectors")
+        self.assertTrue(hasattr(index, "revisions"))
+        self.assertTrue(index.upsert("bridge", "Secret title", [], "secret body", "vec-9"))
+        self.app.vectors = index
+        status, ids = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200, ids)
+        self.assertEqual(ids["vector"], {"bridge": "vec-9"})
+        self.assertNotIn("secret", json.dumps(ids))
+        status, created = _post(
+            f"{self.base}/v1/upsert",
+            {"id": "bridge", "title": "Secret title", "aliases": [], "content": "secret body", "revision": "rev-9"},
+            token="test-token",
+        )
+        self.assertEqual(status, 200, created)
+        status, ids = _get(f"{self.base}/v1/ids", token="test-token")
+        self.assertEqual(status, 200, ids)
+        self.assertEqual(ids["bdh"], {"bridge": "rev-9"})
+        self.assertEqual(ids["vector"], {"bridge": "rev-9"})
+        self.assertNotIn("secret", json.dumps(ids))
+
     def test_non_loopback_without_a_token_is_refused(self) -> None:
         bare = MemoryApp(AssociativeBDH(n=32, k=2, seed=1), self.store, token="")
         with self.assertRaises(SystemExit):

@@ -25,7 +25,7 @@ export async function compose(config: AppConfig) {
         baseUrl: config.neural.base_url,
         token: process.env[config.neural.bearer_token_env],
         timeoutMs: config.neural.timeout_ms,
-        vectorMinScore: config.neural.vector_min_score,
+        vectorMinScore: config.neural.vector_min_score ?? 0,
       })
     : new DisabledNeuralMemory();
   // The neural layer is a second disposable index. It is not installed at all

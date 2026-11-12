@@ -74,4 +74,17 @@ export class FileChangesetStore implements ChangesetStore {
     try { await assertContained(this.root, file); return JSON.parse(await readFile(file, 'utf8')) as Changeset; }
     catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; }
   }
+  async list(): Promise<Changeset[]> {
+    let names: string[] = [];
+    try { names = await readdir(this.root); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const changesets: Changeset[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json') || name.startsWith('.')) continue;
+      const id = name.slice(0, -'.json'.length);
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,200}$/.test(id)) continue;
+      const changeset = await this.get(id);
+      if (changeset) changesets.push(changeset);
+    }
+    return changesets;
+  }
 }

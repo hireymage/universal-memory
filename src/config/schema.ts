@@ -4,6 +4,11 @@ import YAML from 'yaml';
 import { z } from 'zod';
 import { resolveToolset } from '../transports/mcp/toolsets.js';
 
+/** One minute. A shorter health interval would rescan the vault in a tight loop. */
+export const MIN_HEALTH_INTERVAL_HOURS = 1 / 60;
+/** One year. The file schema and MEMORY_HEALTH_INTERVAL_HOURS share this ceiling. */
+export const MAX_HEALTH_INTERVAL_HOURS = 8_760;
+
 const routeSchema = z.object({ backend: z.string().default('markdown'), path: z.string().min(1) });
 const configSchema = z.object({
   name: z.string().default('Universal Memory MCP'),
@@ -20,8 +25,8 @@ const configSchema = z.object({
   toolset: z.enum(['minimal', 'standard', 'full']).optional(),
   /**
    * Repeat the generic result envelope as each tool's `outputSchema`.
-   * Off by default: the envelope is identical for every tool and dominates tools/list.
-   * `MEMORY_OUTPUT_SCHEMA` overrides this.
+   * On by default so clients that validate tool output keep working.
+   * Set false (or `MEMORY_OUTPUT_SCHEMA=false`) to drop it from tools/list.
    */
   advertise_output_schema: z.boolean().optional(),
   transport: z.enum(['stdio', 'http']).default('stdio'),
@@ -30,8 +35,10 @@ const configSchema = z.object({
     port: z.number().int().min(1).max(65535).default(3333),
     allowed_origins: z.array(z.string()).default([]),
     /**
-     * Extra Host / Origin names when the server is not bound to loopback.
-     * Localhost is always included unless `MEMORY_HTTP_ALLOW_ANY_HOST=1`.
+     * Extra Host names. On a non-loopback bind, Host stays unrestricted unless
+     * this list is set (localhost is then included too). Origin is still limited
+     * to localhost plus `allowed_origins`. `MEMORY_HTTP_ALLOW_ANY_HOST=1` turns
+     * both checks off.
      */
     allowed_hosts: z.array(z.string()).optional(),
     bearer_token_env: z.string().default('MEMORY_API_TOKEN'),
@@ -45,7 +52,7 @@ const configSchema = z.object({
    */
   health: z.object({
     enabled: z.boolean().default(false),
-    interval_hours: z.number().positive().max(8_760).default(24),
+    interval_hours: z.number().min(MIN_HEALTH_INTERVAL_HOURS).max(MAX_HEALTH_INTERVAL_HOURS).default(24),
     startup_delay_s: z.number().int().min(0).max(86_400).default(60),
     max_changesets: z.number().int().min(0).max(100).default(5),
   }).optional(),
@@ -100,7 +107,7 @@ export const DEFAULT_HEALTH: HealthConfig = {
   max_changesets: 5,
 };
 
-/** File values win over the defaults. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval only. */
+/** File values win over the defaults. `MEMORY_HEALTH_INTERVAL_HOURS` overrides the interval only, inside the same bounds as the file. */
 export function resolveHealth(
   fromFile?: Partial<HealthConfig> | null,
   env: string | undefined = process.env.MEMORY_HEALTH_INTERVAL_HOURS,
@@ -108,17 +115,14 @@ export function resolveHealth(
   const health: HealthConfig = { ...DEFAULT_HEALTH };
   if (fromFile) {
     if (fromFile.enabled !== undefined) health.enabled = fromFile.enabled;
-    if (fromFile.interval_hours !== undefined) health.interval_hours = fromFile.interval_hours;
+    if (fromFile.interval_hours !== undefined) health.interval_hours = assertHealthInterval(fromFile.interval_hours, 'health.interval_hours');
     if (fromFile.startup_delay_s !== undefined) health.startup_delay_s = fromFile.startup_delay_s;
     if (fromFile.max_changesets !== undefined) health.max_changesets = fromFile.max_changesets;
   }
   const override = env?.trim();
   if (!override) return health;
   const value = Number(override);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`MEMORY_HEALTH_INTERVAL_HOURS must be a positive number (got ${JSON.stringify(override)})`);
-  }
-  health.interval_hours = value;
+  health.interval_hours = assertHealthInterval(value, 'MEMORY_HEALTH_INTERVAL_HOURS');
   return health;
 }
 
@@ -131,10 +135,17 @@ export function resolveFollowSymlinks(fromFile?: boolean, env: string | undefine
   throw new Error(`MEMORY_ALLOW_SYMLINKS must be true or false (got ${JSON.stringify(env)})`);
 }
 
-/** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default false). */
+function assertHealthInterval(value: number, source: string): number {
+  if (!Number.isFinite(value) || value < MIN_HEALTH_INTERVAL_HOURS || value > MAX_HEALTH_INTERVAL_HOURS) {
+    throw new Error(`${source} must be a number of hours from ${MIN_HEALTH_INTERVAL_HOURS} (1 minute) to ${MAX_HEALTH_INTERVAL_HOURS} (got ${JSON.stringify(value)})`);
+  }
+  return value;
+}
+
+/** `MEMORY_OUTPUT_SCHEMA` overrides the file. Unset or blank keeps the file value (default true). */
 export function resolveOutputSchemaFlag(fromFile: boolean | undefined, env: string | undefined = process.env.MEMORY_OUTPUT_SCHEMA): boolean {
   const override = env?.trim();
-  if (!override) return fromFile ?? false;
+  if (!override) return fromFile ?? true;
   const normalized = override.toLowerCase();
   if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
   if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;

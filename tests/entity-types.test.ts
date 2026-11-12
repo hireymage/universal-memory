@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import YAML from 'yaml';
 import {
+  ENTITY_TYPES,
   defaultRoutes,
   isInvalidDate,
   isIsoDate,
@@ -43,6 +46,19 @@ describe('entity type registry', () => {
     expect(isIsoDateTime('v pátek')).toBe(false);
     expect(isInvalidDate('12.5.1990', 'date')).toBe(true);
     expect(isInvalidDate(null, 'date')).toBe(false);
+  });
+
+  it('matches docker and strata routes to the registry, and keeps the example routes present', () => {
+    const defaults = defaultRoutes();
+    for (const file of ['config.docker.yml', 'config.strata.yml']) {
+      const routing = (YAML.parse(readFileSync(file, 'utf8')) as { routing: Record<string, { path: string }> }).routing;
+      expect(Object.keys(routing).sort(), file).toEqual(ENTITY_TYPES.map(spec => spec.type).sort());
+      for (const spec of ENTITY_TYPES) expect(routing[spec.type]?.path, `${file} ${spec.type}`).toBe(defaults[spec.type]?.path);
+    }
+    const example = (YAML.parse(readFileSync('config.example.yml', 'utf8')) as { routing: Record<string, { path: string }> }).routing;
+    for (const type of ['event', 'preference', 'fact', 'topic', 'conversation', 'task', 'idea', 'decision', 'person', 'note', 'memory']) {
+      expect(example[type]?.path, type).toMatch(/\.md$/);
+    }
   });
 
   it('normalizes tag case and duplicates without stripping Czech letters', () => {
