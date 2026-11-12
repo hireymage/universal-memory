@@ -4,6 +4,8 @@ import { oneSentence } from '../../domain/snippet.js';
 
 /** Approximate ceiling for one compact tool result (JSON chars, o200k is ~4 chars/token). */
 export const RESPONSE_CHAR_BUDGET = 8_000;
+// Raw Markdown responses (retrieve_context) keep full bodies but still get a ceiling so one query cannot return megabytes.
+export const RAW_RESPONSE_CHAR_BUDGET = 40_000;
 const COMPACT_CONTENT_CHARS = 480;
 
 /** Identifiers a later call needs. The budget may clip prose, never these. */
@@ -51,9 +53,10 @@ export function presentFailure(error: { code: string; message: string; details?:
 
 function packageEnvelope(ok: boolean, dataOrError: unknown, options: PresentOptions): ToolPayload {
   const duplicate = options.duplicate === true || options.mode === 'full';
-  const body = options.mode === 'full' || options.raw
+  const ceiling = options.budgetChars ?? (options.raw ? RAW_RESPONSE_CHAR_BUDGET : RESPONSE_CHAR_BUDGET);
+  const body = options.mode === 'full'
     ? dataOrError
-    : fitBudget(compactValue(dataOrError, options), options.budgetChars ?? RESPONSE_CHAR_BUDGET);
+    : fitBudget(options.raw ? dataOrError : compactValue(dataOrError, options), ceiling);
   const envelope: Record<string, unknown> = ok
     ? { ok: true, data: body, ...(options.extras ?? {}) }
     : { ok: false, error: body };
