@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, unlink, writeFile, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { ulid } from 'ulid';
 import type { AuditSink, EntityStorage, SearchIndex } from '../ports/index.js';
@@ -268,7 +268,8 @@ export class HealthService {
       .map(orderedOperations)
       .filter(operations => operations.length > 0);
     const { slices, omitted } = chunkOperations(groups, Math.max(0, maxChangesets), Math.max(1, maxOps));
-    const preparedAlready = (await this.maintenance.listChangesets()).filter(changeset => changeset.status === 'prepared' && changeset.description.startsWith('Health check dry-run'));
+    // A single unreadable changeset file must not abort the whole health run; reuse is an optimisation only.
+    const preparedAlready = (await this.maintenance.listChangesets().catch(() => [])).filter(changeset => changeset.status === 'prepared' && changeset.description.startsWith('Health check dry-run'));
     const changesets: HealthChangesetRef[] = [];
     for (const slice of slices) {
       const fingerprint = operationFingerprint(slice);
@@ -545,7 +546,14 @@ export class HealthService {
 
   private async lockIsStale(): Promise<boolean> {
     try {
-      const pid = Number((await readFile(this.lockPath, 'utf8')).trim());
+      const info = await stat(this.lockPath);
+      const ageMs = Date.now() - info.mtimeMs;
+      // A PID can be reused by an unrelated process, so a lock older than the cap is stale regardless of the PID.
+      if (ageMs > LOCK_MAX_AGE_MS) return true;
+      const text = (await readFile(this.lockPath, 'utf8')).trim();
+      // An empty lock may be another process between open(wx) and writeFile; give it a moment before judging.
+      if (text === '') return ageMs > LOCK_EMPTY_GRACE_MS;
+      const pid = Number(text);
       if (!Number.isInteger(pid) || pid <= 0) return true;
       try {
         process.kill(pid, 0);
@@ -566,6 +574,9 @@ export class HealthService {
     await writeAtomic(path.join(this.reportDir, 'latest.json'), body);
   }
 }
+
+const LOCK_MAX_AGE_MS = 60 * 60 * 1000;
+const LOCK_EMPTY_GRACE_MS = 5000;
 
 function propose(fixes: Map<string, Fix>, id: string, priority: number, operation: ChangeOperation): void {
   const existing = fixes.get(id) ?? { id, priority, operations: [] };
