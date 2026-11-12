@@ -17,19 +17,27 @@ Current baseline: MCP `2026-07-28`, official TypeScript SDK `2.0.0`, stdio and S
 
 ## Tool catalogs
 
-`MEMORY_TOOLSET` (or `toolset` in the config file) chooses which MCP tools are advertised. The default is **`full`**, so existing clients keep every current tool name. An unknown value refuses to start.
+`MEMORY_TOOLSET` (or `toolset` in the config file) chooses which MCP tools are advertised. The default is **`full`**, so an existing client keeps every tool name. An unknown value refuses to start. `standard` is the smaller everyday catalog (read, write, and graph) and is opt-in.
 
 | Profile | What it advertises |
 |---|---|
 | `minimal` | `find`, `retrieve_context`, `search_memory`, `recall`, `remember`, `update_memory`, `archive_memory`, `find_related`, `search_people`, `find_name_days`, `resolve_entity`, `health_report` |
-| `standard` | minimal, plus graph, claim, and source tools (`create_relation`, `create_claim`, `create_source`, `distill_next_chunk`, `triage_inbox`, and the rest of that family) |
+| `standard` | minimal, plus graph, claim, and source tools (`create_relation`, `create_claim`, `create_source`, `distill_next_chunk`, `triage_inbox`, and the rest of that family). This covers everyday read, write, and graph use. |
 | `full` | every tool, including aliases (`people`, `notes`, …), maintenance (`apply_changeset`, `reindex`, `run_health_check`, …), and `agent_profiles` |
+
+`tool_discovery` (`MEMORY_TOOL_DISCOVERY`) is `eager` or `lazy`. Eager is the default and lists every tool in the selected catalog. On `full`, lazy lists the standard tools plus `tool_groups`. `tool_groups({group, enable:true})` turns on `aliases`, `maintenance`, `agents`, or `neural` for that process session and notifies `tools/list_changed`. The enable does not survive a stateless HTTP request.
 
 `standard` can prepare a merge changeset, but `apply_changeset` is maintenance and stays on `full`. The safety model does not change with the profile: `read_only` still defaults to true, writes still require `expected_revision`, nothing is deleted, and maintenance is still dry-run then `apply_changeset`.
 
-`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the result envelope on every tool. It stays **on** by default, so a client that validates `outputSchema` keeps working after an upgrade. Set it to `false` to drop that repeated schema from `tools/list`. Results are always returned as `structuredContent` and as a JSON text block. ISO dates are advertised as strings with `format: date` or `format: date-time`; the server still rejects invalid dates. `find_name_days` still returns the people array as `data`, with `from`, `to`, and `calendar` beside it; those three fields are part of the output schema.
+Advertised input schemas are compact by default: discriminated unions are flattened to one object, and repeated keywords (`additionalProperties: false`, `minLength: 1`, record `propertyNames`) are left out. Defaults stay in the schema, including the previous list limits. Zod still validates the original schema, including ISO dates. `verbose_schema: true` or `MEMORY_VERBOSE_SCHEMA=1` restores the previous JSON Schema shape. ISO dates are advertised as strings with `format: date` or `format: date-time`.
 
-`npm run measure:tools` prints tools/list size per profile (js-tiktoken `o200k_base`).
+`advertise_output_schema` (env `MEMORY_OUTPUT_SCHEMA`) repeats the result envelope on every tool. It stays **on** by default, so a client that validates `outputSchema` keeps working. Set it to `false` to drop that repeated schema from `tools/list`. When it is on, the same JSON is also returned as `structuredContent`. `find_name_days` returns `{people, from, to, calendar}` inside `data` and the same `from`, `to`, and `calendar` beside `data`.
+
+The low-token setup is opt-in: `MEMORY_TOOLSET=standard`, `MEMORY_RESPONSE=compact`, and `MEMORY_OUTPUT_SCHEMA=false`. The default stays `full`, eager discovery, compact bodies, and `outputSchema` on.
+
+`response` (`MEMORY_RESPONSE`) is `compact` or `full`. Compact is the default. It drops nulls and empty strings, keeps empty lists, does not echo the query, returns paths as stored (relative to the vault), and puts the JSON in the text content only. List hits keep `revision`, so the next update can send `expected_revision`. A read omits non-scalar frontmatter and names those keys in `omitted`; `detail: true` returns the frontmatter and the full Markdown body. `retrieve_context` always returns the full matching entities. A result past about 8k JSON characters comes back with `_truncated`. The budget never shortens ids, paths, or revisions, and clips on Unicode code points. `full` restores the previous body, the `meta.request_id` envelope, and the same JSON as `structuredContent`. Advertising an output schema also sends `structuredContent`, because the protocol requires it.
+
+`npm run measure:tools` prints tools/list size per profile (js-tiktoken `o200k_base`). `npm run measure:responses` prints before/after token sizes for the common calls on a fixture vault.
 
 ## Native macOS development
 
@@ -102,7 +110,7 @@ Filters inside the query are accent- and case-insensitive, in Czech or English:
 
 The default hit is `id`, `title`, `type`, `path`, a one-sentence `snippet`, `score`, and a short `reason`. `detail: true` adds revision, tags, and the score breakdown. `order: "due"` lists tasks and events upcoming first and sets `overdue: true` on past dates; that order considers every dated match, not only the strongest 200 text hits. Archived entities are left out. `osoba:` / `projekt:` match whole words in the title, aliases, wikilinks, and those metadata fields, not a passing mention in the body. An unknown type such as `typ:úkoly` returns a warning and no hits. A blank query is rejected. Ten compact hits are meant to stay under about 1.5k tokens.
 
-`search_memory` keeps its three lists (`lexical`, `neural`, `vector`). The default snippet is one sentence and the neural payload omits the long note and per-hit snippets. `verbose: true` restores the previous long snippets. `order: "due"` is also accepted there and on `search_entities`.
+`search_memory` keeps its three lists (`lexical`, `neural`, `vector`). The default snippet is one sentence and the neural payload omits the long note and per-hit snippets. Compact responses omit a null neural or vector list and still include each hit's `revision`. `verbose: true` restores the previous long snippets. `order: "due"` is also accepted there and on `search_entities`. The default limit stays 20.
 
 ## Ranking
 

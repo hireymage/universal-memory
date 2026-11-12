@@ -18,8 +18,8 @@ import { TOOLSETS, type Toolset } from '../src/transports/mcp/toolsets.js';
 const encoding = getEncoding('o200k_base');
 const tokens = (value: string) => encoding.encode(value).length;
 
-async function listed(toolset: Toolset, advertiseOutput: boolean) {
-  const services = { config: { toolset, advertise_output_schema: advertiseOutput } } as Services;
+async function listed(toolset: Toolset, advertiseOutput: boolean, discovery: 'lazy' | 'eager', verboseSchema: boolean) {
+  const services = { config: { toolset, advertise_output_schema: advertiseOutput, tool_discovery: discovery, verbose_schema: verboseSchema } } as Services;
   const server = createMemoryMcpServer(services);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -36,16 +36,23 @@ async function listed(toolset: Toolset, advertiseOutput: boolean) {
 }
 
 const advertiseOutput = process.env.MEMORY_OUTPUT_SCHEMA !== 'false' && process.env.MEMORY_OUTPUT_SCHEMA !== '0';
+const verboseSchema = process.env.MEMORY_VERBOSE_SCHEMA === 'true' || process.env.MEMORY_VERBOSE_SCHEMA === '1';
 console.log(`tokenizer: js-tiktoken o200k_base`);
 console.log(`outputSchema: ${advertiseOutput ? 'on (server default)' : 'off'}`);
+console.log(`schema: ${verboseSchema ? 'verbose' : 'compact (default)'}`);
 console.log('');
 
-for (const toolset of TOOLSETS) {
-  const tools = await listed(toolset, advertiseOutput);
+const profiles: Array<{ toolset: Toolset; discovery: 'lazy' | 'eager' }> = [
+  ...TOOLSETS.map(toolset => ({ toolset, discovery: 'lazy' as const })),
+  { toolset: 'full', discovery: 'eager' },
+];
+
+for (const profile of profiles) {
+  const tools = await listed(profile.toolset, advertiseOutput, profile.discovery, verboseSchema);
   const payload = { tools };
   const compact = JSON.stringify(payload);
   const pretty = JSON.stringify(payload, null, 2);
-  console.log(`## ${toolset}  tools=${tools.length}  compact=${tokens(compact)} tokens (${compact.length} chars)  pretty=${tokens(pretty)} tokens (${pretty.length} chars)`);
+  console.log(`## ${profile.toolset}/${profile.discovery}  tools=${tools.length}  compact=${tokens(compact)} tokens (${compact.length} chars)  pretty=${tokens(pretty)} tokens (${pretty.length} chars)`);
   const rows = tools.map(tool => {
     const compactTool = JSON.stringify(tool);
     return { name: tool.name, tokens: tokens(compactTool), chars: compactTool.length };

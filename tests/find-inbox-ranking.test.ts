@@ -33,6 +33,7 @@ async function setup(extra: Partial<AppConfig> = {}) {
   await mkdir(vault, { recursive: true });
   const config: AppConfig = {
     name: 'Find', vault_root: vault, read_only: false, audit_dir: path.join(root, 'state', 'audit'),
+    toolset: 'full', tool_discovery: 'eager', response: 'full',
     transport: 'stdio', http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'TEST_TOKEN' },
     routing, ...extra,
   };

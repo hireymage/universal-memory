@@ -255,7 +255,7 @@ describe('BDH adapter', () => {
     await mkdir(path.join(root, 'vault'));
     const config: AppConfig = {
       name: 'Neural HTTP', vault_root: path.join(root, 'vault'), read_only: false,
-      audit_dir: path.join(root, 'audit'), transport: 'http',
+      audit_dir: path.join(root, 'audit'), transport: 'http', toolset: 'full', tool_discovery: 'eager', response: 'full',
       http: { bind: '127.0.0.1', port: 3333, allowed_origins: [], bearer_token_env: 'UNSET_TEST_TOKEN' },
       routing,
     };

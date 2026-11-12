@@ -18,7 +18,7 @@ interface Harness{base:string;services:Services;client:Client}
 
 async function harness(name:string,bearerTokenEnv='UNSET_TEST_TOKEN',connectMcp=true):Promise<Harness>{
  const root=await mkdtemp(path.join(os.tmpdir(),name));cleanup.push(()=>rm(root,{recursive:true,force:true}));await mkdir(path.join(root,'vault'));
- const config:AppConfig={name:'REST Parity Test',vault_root:path.join(root,'vault'),read_only:false,audit_dir:path.join(root,'audit'),transport:'http',http:{bind:'127.0.0.1',port:3333,allowed_origins:[],bearer_token_env:bearerTokenEnv},routing};
+ const config:AppConfig={name:'REST Parity Test',vault_root:path.join(root,'vault'),read_only:false,audit_dir:path.join(root,'audit'),transport:'http',toolset:'full',tool_discovery:'eager',response:'full',http:{bind:'127.0.0.1',port:3333,allowed_origins:[],bearer_token_env:bearerTokenEnv},routing};
  const services=await compose(config);const app=createHttpApp(services);const http=await listen(app);cleanup.push(()=>close(http));
  const address=http.address();if(!address||typeof address==='string')throw new Error('No TCP address');
  const client=new Client({name:'test-client',version:'1.0.0'},{versionNegotiation:{mode:'auto'}});cleanup.push(()=>client.close());

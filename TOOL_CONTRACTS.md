@@ -1,12 +1,12 @@
 # MCP tool contracts
 
-All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. Advertised input schemas omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time`, and the server still validates the real calendar. `outputSchema` is advertised unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is false. The envelope allows optional `from`, `to`, and `calendar` so `find_name_days` can keep those fields beside `data`. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). Every successful result is:
+All tools use JSON Schema generated from strict Zod schemas. Unknown top-level fields are rejected where the schema is an object. Limits are bounded. The schema advertised by tools/list is compact unless `verbose_schema` / `MEMORY_VERBOSE_SCHEMA` is set: unions are flattened, defaults stay visible, and the server still validates the original Zod schema (including real ISO dates). Both modes omit the draft `$schema` keyword and the long ISO calendar regex; `format` is `date` or `date-time` and `type` stays `string`. `outputSchema` is advertised unless `advertise_output_schema` / `MEMORY_OUTPUT_SCHEMA` is false. The envelope allows optional `from`, `to`, and `calendar` so `find_name_days` can keep those fields beside `data` and inside it. Which tools appear is selected by `toolset` / `MEMORY_TOOLSET` (`minimal`, `standard`, `full`; default `full`). `tool_discovery` / `MEMORY_TOOL_DISCOVERY` defaults to `eager` (every selected name). `lazy` hides aliases, maintenance, agents, and neural behind `tool_groups` until that session enables a group. With `outputSchema` off, a compact result is JSON text `{"ok":true,"data":{...}}` and list hits still keep `revision`. `detail: true` returns frontmatter and the full body. `retrieve_context` returns full entities. Empty lists stay empty lists. `response` / `MEMORY_RESPONSE=full`, or an advertised output schema, restores the previous envelope:
 
 ```json
 {"ok":true,"data":{},"meta":{"api_version":"1","request_id":"uuid"}}
 ```
 
-Failures use `ok:false`, a stable `error.code`, message, optional details, and MCP `isError:true`. The same envelope is returned as `structuredContent` and serialized text for compatibility.
+Failures use `ok:false`, a stable `error.code`, message, optional details, and MCP `isError:true`. Compact failures are JSON text only. `MEMORY_RESPONSE=full` returns that envelope both as text and as `structuredContent`. Compact reads (`recall`, `get_entity`, and the other single-entity reads) omit non-scalar frontmatter unless `detail: true`, and list the omitted keys. `detail: true` returns the full Markdown body. `search_entities` and `list_people` return an index that includes `revision`.
 
 ## Memory and generic entities
 
@@ -40,7 +40,7 @@ Domain tools use a discriminating `action` enum, which gives small models one un
 
 `link_entity_to_project` is represented by `link_entities` with the project as source or target. This prevents two implementations of relationship behavior. Older convenience names can be added later as aliases without changing semantics.
 
-`find_name_days` returns `data` as an object with `people`, `from`, `to`, and `calendar` (the same shape as before), and also repeats `from`, `to`, and `calendar` at the top level.
+`find_name_days` returns `{people, from, to, calendar}` inside `data`, and the same `from`, `to`, and `calendar` beside `data`. An empty day keeps `people: []`.
 
 ## Agent profiles
 

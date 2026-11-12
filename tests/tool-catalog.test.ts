@@ -27,10 +27,12 @@ const FULL_TOOLS = [
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 
+const eagerFull = { toolset: 'full' as const, tool_discovery: 'eager' as const };
+
 function services(config: Partial<AppConfig> = {}): Services {
   return {
-    config: { toolset: 'full', ...config },
-    people: { nameDays: async () => [{ metadata: { id: 'p1', title: 'Martin' } }] },
+    config: { ...config },
+    people: { nameDays: async (from: string) => from === '2026-01-01' ? [] : [{ metadata: { id: 'p1', title: 'Martin' } }] },
   } as unknown as Services;
 }
 
@@ -53,11 +55,26 @@ function walk(node: unknown, visit: (obj: Record<string, unknown>) => void): voi
 }
 
 describe('MCP toolset profiles', () => {
-  it('defaults to the full catalog, including aliases, maintenance, and agent profiles', async () => {
+  it('defaults to the full eager catalog, so existing tool names stay listed', async () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([...FULL_TOOLS].sort());
-    expect(names).toHaveLength(64);
+    expect(names).toEqual(expect.arrayContaining(['apply_changeset', 'reindex', 'people', 'projects', 'notes', 'inbox']));
+    expect(names).not.toContain('tool_groups');
+  });
+
+  it('lazy full enables a hidden group on demand', async () => {
+    const client = await connect({ toolset: 'full', tool_discovery: 'lazy' });
+    const lazy = (await client.listTools()).tools.map(tool => tool.name);
+    expect(lazy).toContain('tool_groups');
+    expect(lazy).not.toContain('apply_changeset');
+    expect(lazy).toEqual(expect.arrayContaining([...STANDARD_TOOLS]));
+    const enabled = await client.callTool({ name: 'tool_groups', arguments: { group: 'maintenance', enable: true } });
+    expect(enabled.isError).not.toBe(true);
+    const after = (await client.listTools()).tools.map(tool => tool.name);
+    expect(after).toEqual(expect.arrayContaining(['apply_changeset', 'reindex', 'run_health_check']));
+    const called = await client.callTool({ name: 'reindex', arguments: {} });
+    expect(textOf(called)).not.toMatch(/Tool reindex disabled/);
   });
 
   it('minimal and standard expose only their catalogs', async () => {
@@ -80,6 +97,9 @@ describe('MCP toolset profiles', () => {
     await writeFile(file, yaml);
     const loaded = await loadConfig(file);
     expect(loaded.toolset).toBe('full');
+    expect(loaded.tool_discovery).toBe('eager');
+    expect(loaded.verbose_schema).toBe(false);
+    expect(loaded.response).toBe('compact');
     expect(loaded.advertise_output_schema).toBe(true);
     await writeFile(file, `toolset: minimal\n${yaml}`);
     expect((await loadConfig(file)).toolset).toBe('minimal');
@@ -99,12 +119,27 @@ describe('MCP toolset profiles', () => {
       await expect(loadConfig(file)).rejects.toThrow(/MEMORY_OUTPUT_SCHEMA/);
     });
     expect(resolveOutputSchemaFlag(false, 'off')).toBe(false);
+    await withEnv('MEMORY_TOOL_DISCOVERY', 'eager', async () => {
+      expect((await loadConfig(file)).tool_discovery).toBe('eager');
+    });
+    await withEnv('MEMORY_TOOL_DISCOVERY', 'sideways', async () => {
+      await expect(loadConfig(file)).rejects.toThrow(/MEMORY_TOOL_DISCOVERY/);
+    });
+    await withEnv('MEMORY_RESPONSE', 'full', async () => {
+      expect((await loadConfig(file)).response).toBe('full');
+    });
+    await withEnv('MEMORY_RESPONSE', 'huge', async () => {
+      await expect(loadConfig(file)).rejects.toThrow(/MEMORY_RESPONSE/);
+    });
+    await withEnv('MEMORY_VERBOSE_SCHEMA', '1', async () => {
+      expect((await loadConfig(file)).verbose_schema).toBe(true);
+    });
   });
 });
 
 describe('advertised tool schemas', () => {
-  it('advertises outputSchema by default, without $schema or ISO date patterns', async () => {
-    const tools = (await (await connect()).listTools()).tools;
+  it('advertises outputSchema by default, keeps date types and defaults, and flattens unions', async () => {
+    const tools = (await (await connect(eagerFull)).listTools()).tools;
     expect(tools.every(tool => tool.outputSchema !== undefined)).toBe(true);
     const dated = new Set<string>();
     for (const tool of tools) {
@@ -112,25 +147,62 @@ describe('advertised tool schemas', () => {
       expect(tool.outputSchema).not.toHaveProperty('$schema');
       walk(tool.inputSchema, node => {
         if ('$schema' in node) throw new Error(`${tool.name} still advertises $schema`);
+        expect(node.additionalProperties, tool.name).not.toBe(false);
         if (node.format === 'date' || node.format === 'date-time') {
           dated.add(tool.name);
           expect(node.pattern, tool.name).toBeUndefined();
-          expect(node.type).toBe('string');
+          expect(node.type, tool.name).toBe('string');
         }
       });
     }
     for (const name of ['find_name_days', 'find_birthdays', 'get_entity_timeline', 'create_claim']) expect(dated.has(name), name).toBe(true);
     const output = tools[0]?.outputSchema as { additionalProperties?: boolean; properties?: Record<string, unknown> };
-    expect(output.additionalProperties).toBe(false);
+    expect(output.additionalProperties).toBeUndefined();
     expect(output.properties).toEqual(expect.objectContaining({ ok: expect.anything(), data: expect.anything(), from: expect.anything(), to: expect.anything(), calendar: expect.anything(), meta: expect.anything() }));
     const nameDays = tools.find(tool => tool.name === 'find_name_days');
     expect(nameDays?.inputSchema).toMatchObject({
       properties: { date: { type: 'string', format: 'date' }, from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
     });
+    const searchMemory = tools.find(tool => tool.name === 'search_memory')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const claims = tools.find(tool => tool.name === 'get_claims')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const people = tools.find(tool => tool.name === 'list_people')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    const relations = tools.find(tool => tool.name === 'get_entity_relations')?.inputSchema as { properties?: { limit?: { default?: number } } };
+    expect(searchMemory.properties?.limit?.default).toBe(20);
+    expect(claims.properties?.limit?.default).toBe(100);
+    expect(people.properties?.limit?.default).toBe(50);
+    expect(relations.properties?.limit?.default).toBe(200);
+    const profiles = tools.find(tool => tool.name === 'agent_profiles')?.inputSchema as { oneOf?: unknown; properties?: { action?: { enum?: string[] } } };
+    expect(profiles.oneOf).toBeUndefined();
+    expect(profiles.properties?.action?.enum).toContain('create');
+    const inspect = tools.find(tool => tool.name === 'inspect_memory')?.inputSchema as { properties?: { scope?: { oneOf?: unknown; properties?: { kind?: { enum?: string[] } } } } };
+    expect(inspect.properties?.scope?.oneOf).toBeUndefined();
+    expect(inspect.properties?.scope?.properties?.kind?.enum).toContain('vault');
+  });
+
+  it('verbose schema keeps oneOf, defaults, and the ISO date type', async () => {
+    const tools = (await (await connect({ ...eagerFull, verbose_schema: true })).listTools()).tools;
+    let dateFields = 0;
+    for (const tool of tools) {
+      walk(tool.inputSchema, node => {
+        if (node.format === 'date' || node.format === 'date-time') {
+          dateFields += 1;
+          expect(node.pattern, tool.name).toBeUndefined();
+          expect(node.type).toBe('string');
+        }
+      });
+    }
+    expect(dateFields).toBe(24);
+    const profiles = tools.find(tool => tool.name === 'agent_profiles')?.inputSchema as { oneOf?: unknown[] };
+    expect(profiles.oneOf?.length).toBeGreaterThan(5);
+    const remember = tools.find(tool => tool.name === 'remember')?.inputSchema as { properties?: { content?: { default?: string } }; additionalProperties?: boolean };
+    expect(remember.additionalProperties).toBe(false);
+    const output = tools[0]?.outputSchema as { additionalProperties?: boolean };
+    expect(output.additionalProperties).toBe(false);
+    expect(remember.properties?.content?.default).toBe('');
   });
 
   it('omits outputSchema when advertise_output_schema is false', async () => {
-    const tools = (await (await connect({ advertise_output_schema: false })).listTools()).tools;
+    const tools = (await (await connect({ ...eagerFull, advertise_output_schema: false })).listTools()).tools;
     expect(tools.every(tool => tool.outputSchema === undefined)).toBe(true);
   });
 
@@ -142,32 +214,44 @@ describe('advertised tool schemas', () => {
     const notLeap = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-02-29' } });
     expect(notLeap.isError).toBe(true);
     expect(textOf(notLeap)).toMatch(/Invalid ISO date/);
-    const badTime = await client.callTool({ name: 'record_project_decision', arguments: { project_id: 'p', title: 't', decision: 'd', reason: 'r', decided_at: 'yesterday' } });
+    const full = await connect(eagerFull);
+    const badTime = await full.callTool({ name: 'record_project_decision', arguments: { project_id: 'p', title: 't', decision: 'd', reason: 'r', decided_at: 'yesterday' } });
     expect(badTime.isError).toBe(true);
     expect(textOf(badTime)).toMatch(/Invalid ISO datetime/);
   });
 
-  it('keeps find_name_days from, to, and calendar beside data, and the output schema allows them', async () => {
-    const client = await connect();
-    const called = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
-    expect(called.isError).not.toBe(true);
-    const body = called.structuredContent as {
-      ok: boolean;
-      data: { people: Array<{ metadata: { title: string } }>; from: string; to: string; calendar: Array<{ date: string; names: string[] }> };
-      from: string;
-      to: string;
-      calendar: Array<{ date: string; names: string[] }>;
-      meta: { api_version: string };
+  it('keeps find_name_days from, to, and calendar inside data and beside it', async () => {
+    const window = {
+      from: '2026-11-11',
+      to: '2026-11-11',
+      calendar: [{ date: '2026-11-11', names: ['Martin'] }],
     };
+    const people = [{ metadata: { id: 'p1', title: 'Martin' } }];
+    const client = await connect({ ...eagerFull, advertise_output_schema: false, response: 'compact' });
+    const quiet = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
+    expect(quiet.isError).not.toBe(true);
+    expect(quiet.structuredContent).toBeUndefined();
+    const quietBody = JSON.parse(textOf(quiet)) as { ok: boolean; data: { people: typeof people } & typeof window; meta?: unknown; from?: string; to?: string; calendar?: typeof window.calendar };
+    expect(quietBody.ok).toBe(true);
+    expect(quietBody.meta).toBeUndefined();
+    expect(quietBody.data).toEqual({ people, ...window });
+    expect(quietBody.from).toBe(window.from);
+    expect(quietBody.to).toBe(window.to);
+    expect(quietBody.calendar).toEqual(window.calendar);
+    const empty = await client.callTool({ name: 'find_name_days', arguments: { date: '2026-01-01' } });
+    const emptyBody = JSON.parse(textOf(empty)) as { data: { people: unknown[] } };
+    expect(emptyBody.data.people).toEqual([]);
+
+    const advertised = await connect();
+    const called = await advertised.callTool({ name: 'find_name_days', arguments: { date: '2026-11-11' } });
+    expect(called.isError).not.toBe(true);
+    const body = called.structuredContent as { ok: boolean; data: { people: typeof people } & typeof window; from: string; to: string; calendar: typeof window.calendar; meta: { api_version: string } };
     expect(body.ok).toBe(true);
     expect(body.meta.api_version).toBe('1');
-    expect(body.data.people).toEqual([{ metadata: { id: "p1", title: "Martin" } }]);
-    expect(body.data.from).toBe("2026-11-11");
-    expect(body.from).toBe('2026-11-11');
-    expect(body.to).toBe('2026-11-11');
-    expect(body.calendar).toEqual([{ date: '2026-11-11', names: ['Martin'] }]);
-    const schema = (await client.listTools()).tools.find(tool => tool.name === 'find_name_days')?.outputSchema as { additionalProperties?: boolean; properties?: Record<string, unknown> };
-    expect(schema.additionalProperties).toBe(false);
+    expect(body.data).toEqual({ people, ...window });
+    expect(body.from).toBe(window.from);
+    expect(body.calendar).toEqual(window.calendar);
+    const schema = (await advertised.listTools()).tools.find(tool => tool.name === 'find_name_days')?.outputSchema as { properties?: Record<string, unknown> };
     for (const key of Object.keys(body)) expect(schema.properties).toHaveProperty(key);
   });
 });

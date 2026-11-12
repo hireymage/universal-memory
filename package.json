@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "lint": "eslint src tests scripts vitest.config.ts eslint.config.js",
     "measure:tools": "tsx scripts/measure-tools.ts",
+    "measure:responses": "tsx scripts/measure-responses.ts",
     "start": "node dist/cli.js serve",
     "dev": "tsx src/cli.ts serve"
   },

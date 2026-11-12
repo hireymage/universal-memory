@@ -12,7 +12,7 @@ The MVP is production-oriented but deliberately bounded: local full-text search 
 
 The implementation targets MCP specification `2026-07-28` and the stable official TypeScript SDK v2 packages (`@modelcontextprotocol/server` and `@modelcontextprotocol/express`). The standard transports are stdio and Streamable HTTP. Legacy HTTP+SSE is not implemented.
 
-The specification requires structured tool schemas, deterministic discovery, per-request metadata in the 2026 protocol era, and validation of Streamable HTTP origins. The SDK supplies protocol negotiation and wire behavior. We expose both `structuredContent` and a JSON text block for compatibility with older clients.
+The specification requires structured tool schemas, deterministic discovery, per-request metadata in the 2026 protocol era, and validation of Streamable HTTP origins. The SDK supplies protocol negotiation and wire behavior. Compact responses send one JSON text block. `MEMORY_RESPONSE=full` also sends `structuredContent` and the `meta` envelope for older clients.
 
 Important evolution rule: the public tool names and meanings are additive. Existing fields are not repurposed. Breaking changes require a new tool name or major API version and a documented compatibility window.
 
@@ -220,7 +220,7 @@ The grouped tools implement the requested semantic operations while keeping the 
 | `reindex` | Rebuild derived state | optional scope | counts and diagnostics |
 | `audit_history` | Inspect events or prepare rollback | filters/action | events or inverse changeset |
 
-Each concrete JSON Schema is generated from Zod in code, uses `additionalProperties: false` where appropriate, enums, bounded limits, and ISO `format` (`date` / `date-time`) without the long calendar regex. The shared output envelope is advertised as `outputSchema` unless `advertise_output_schema` (or `MEMORY_OUTPUT_SCHEMA`) is turned off. `TOOL_CONTRACTS.md` contains the human-readable catalog. `MEMORY_TOOLSET` selects `minimal`, `standard`, or `full` (default `full`).
+Each concrete JSON Schema is generated from Zod in code. The server validates that schema (`additionalProperties: false` where the object is strict, enums, bounded limits, and real ISO dates). The advertised copy is compact unless `verbose_schema` / `MEMORY_VERBOSE_SCHEMA` is set: flattened unions, defaults kept, ISO `format` (`date` / `date-time`) and `type: string` without the long calendar regex. The shared output envelope is advertised as `outputSchema` unless `advertise_output_schema` (or `MEMORY_OUTPUT_SCHEMA`) is turned off, and that schema allows optional `from`, `to`, and `calendar`. `TOOL_CONTRACTS.md` contains the human-readable catalog. `MEMORY_TOOLSET` selects `minimal`, `standard`, or `full` (default `full`, so tool names stay additive). `MEMORY_TOOL_DISCOVERY` defaults to `eager`. `lazy` keeps full-only groups behind `tool_groups`.
 
 ### Graph tools
 
